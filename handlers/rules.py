@@ -12,6 +12,11 @@
     * спец-команды ``{name}``, ``{id}``, ``{mention}``, ``{chat}``, ``{count}``
       — подставляются данными вошедшего участника, а не админа.
 
+Приветствие отправляется ровно таким, каким его задал владелец: бот не
+добавляет «от себя» ни шапки «Привет, имя», ни других строк. Предпросмотр
+(кнопка в меню и команда ``.приветствие``) показывает тот же текст, поэтому
+владелец видит именно то, что увидят новички.
+
 В группе работают команды:
     * ``.правила`` / ``/правила`` — показать правила (доступна всем);
     * ``.приветствие`` / ``/приветствие`` — предпросмотр приветствия: админу
@@ -423,19 +428,14 @@ async def _preview(
         fallback_title=chat.display_title,
     )
     markup: Optional[InlineKeyboardMarkup] = None
+    values = richtext.placeholder_values(user, chat_title=title, member_count=count)
+    # Предпросмотр показывает РОВНО контент владельца: спец-команды
+    # подставляются данными того, кто нажал кнопку. Бот ничего не добавляет
+    # «от себя» — ни шапки «Привет, имя», ни приветственной строки.
+    content_value = richtext.apply_placeholders(content_value, values, user=user)
     if kind == "greeting":
-        # Предпросмотр приветствия — с данными владельца и его кнопками.
-        content_value = richtext.build_personal_content(
-            content_value,
-            user,
-            chat_title=title,
-            member_count=count,
-        )
+        # Кнопки владельца видно только у приветствия.
         markup = inline.saved_buttons_keyboard(settings.get(GREETING_BUTTONS_KEY))
-    else:
-        # Предпросмотр правил — спец-команды подставляются данными владельца.
-        values = richtext.placeholder_values(user, chat_title=title, member_count=count)
-        content_value = richtext.apply_placeholders(content_value, values, user=user)
 
     sent = await richtext.send_content(
         bot,
@@ -865,9 +865,11 @@ async def send_custom_greeting(
 ) -> bool:
     """Отправить своё приветствие новому участнику.
 
-    Используется обработчиком входов: если приветствие настроено и включено,
-    стандартный текст не отправляется. Все спец-команды подставляются данными
-    вошедшего участника, а к сообщению добавляются сохранённые кнопки.
+    Используется обработчиком входов (:func:`handle_user_join`): если
+    приветствие настроено и включено, в чат уходит ровно текст владельца —
+    бот ничего не добавляет «от себя» (ни «Привет, имя», ни другой шапки).
+    Все спец-команды (``{name}``, ``{mention}``, ``{chat}``, …) подставляются
+    данными вошедшего участника, к сообщению добавляются сохранённые кнопки.
 
     :param bot: экземпляр бота.
     :param db: соединение с базой данных.
@@ -879,11 +881,9 @@ async def send_custom_greeting(
     if not enabled(settings, "greeting"):
         return False
     title, count = await chat_placeholders(bot, db, chat_id)
-    personal = richtext.build_personal_content(
-        content(settings, "greeting"),
-        member,
-        chat_title=title,
-        member_count=count,
+    values = richtext.placeholder_values(member, chat_title=title, member_count=count)
+    personal = richtext.apply_placeholders(
+        content(settings, "greeting"), values, user=member
     )
     markup = inline.saved_buttons_keyboard(settings.get(GREETING_BUTTONS_KEY))
     return await richtext.send_content(
@@ -966,11 +966,11 @@ async def handle_greeting_command(message: Message, db: Database, bot: Bot) -> N
             chat_id,
             fallback_title=message.chat.title or "",
         )
-        personal = richtext.build_personal_content(
-            content(settings, "greeting"),
-            user,
-            chat_title=title,
-            member_count=count,
+        # Предпросмотр — ровно текст владельца со спец-командами: бот не
+        # дописывает «Привет, имя» от себя.
+        values = richtext.placeholder_values(user, chat_title=title, member_count=count)
+        personal = richtext.apply_placeholders(
+            content(settings, "greeting"), values, user=user
         )
         try:
             await bot.send_message(user.id, profile_service.build_greeting_preview_note_text())

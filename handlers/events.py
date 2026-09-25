@@ -5,8 +5,9 @@
       в группе (требование проекта №8);
     * приветствие новичков и возвращение «старожилов» с краткой сводкой;
     * предупреждение о метках банов пользователя в других чатах;
-    * анонимное приветствие (``welcome_anonymous``): сводка без имени и
-      проверочный мут новичка;
+    * анонимное приветствие (``welcome_anonymous``): сводка без имени и ID
+      плюс проверочный мут новичка — своё приветствие владельца при этом
+      всё равно отправляется;
     * превентивные муты при входе (``marked_mute_*`` — помеченным,
       ``join_mute_*`` — всем): применяется ровно один мут с максимальным
       сроком из применимых;
@@ -14,16 +15,22 @@
     * антирейд: мут новичков на 10 минут и кик при всплеске входов;
     * удаление служебных сообщений (``delete_service_messages``);
     * определение владельца чата при добавлении бота.
+
+Настройки приветствия НЕ исключают друг друга, а складываются
+(:func:`handle_user_join`): своё приветствие владельца + сводка по участнику
+(в анонимном режиме — без имени и ID) + инфо о муте уходят вместе, а правила
+— отдельным сообщением.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Final, Optional
 
 from aiogram import BaseMiddleware, Bot, F, Router
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import (
     ChatMemberUpdated,
@@ -36,7 +43,7 @@ from aiogram.types import (
 import config
 from database import queries
 from database.db import Database
-from database.models import ChatUser, UserProfile, utcnow
+from database.models import ChatUser, Punishment, UserProfile, utcnow
 from services import admin as admin_service
 from services import antiraid as antiraid_service
 from services import permissions, profile as profile_service, punishment
@@ -349,18 +356,42 @@ def _never_active(chat_user: ChatUser) -> bool:
     return chat_user.messages_count == 0 and chat_user.warns_count == 0
 
 
-async def handle_new_member(
+@dataclass(slots=True)
+class JoinSummary:
+    """Что бот знает о вошедшем участнике — данные для блоков о входе.
+
+    :param profile: глобальный профиль из ``users`` (после записи входа).
+    :param chat_user: локальная статистика в чате (может отсутствовать).
+    :param punishments: активные наказания участника в этом чате.
+    :param is_new_globally: профиля не было в базе до этого входа.
+    :param is_new_in_chat: участник впервые в этом чате (или был неактивен).
+    :param fallback_text: стандартное приветствие бота — запасной вариант,
+        когда владелец не задал своё и не просил сводку.
+    """
+
+    profile: Optional[UserProfile] = None
+    chat_user: Optional[ChatUser] = None
+    punishments: list[Punishment] = field(default_factory=list)
+    is_new_globally: bool = False
+    is_new_in_chat: bool = False
+    fallback_text: str = ""
+
+
+async def collect_join_summary(
     bot: Bot,
     db: Database,
-    message: Message,
+    chat_id: int,
     member: User,
-) -> Optional[str]:
-    """Обработать вход одного участника и вернуть текст приветствия.
+    *,
+    chat_title: Optional[str] = None,
+    members_count: Optional[int] = None,
+) -> JoinSummary:
+    """Зафиксировать вход участника и собрать данные для сообщения о входе.
 
     Порядок важен: состояние пользователя фиксируется ДО создания записей,
     иначе «С возвращением» получит даже тот, кто в этом чате впервые.
 
-    Логика:
+    Логика запасного текста:
         1. совсем новый пользователь → «Добро пожаловать»;
         2. пользователь есть в базе, но в этом чате впервые → приветствие
            (или предупреждение о метках банов);
@@ -368,43 +399,88 @@ async def handle_new_member(
 
     :param bot: экземпляр бота.
     :param db: соединение с базой данных.
+    :param chat_id: идентификатор чата.
+    :param member: вошедший пользователь.
+    :param chat_title: название чата (для записи в базу).
+    :param members_count: число участников чата (если известно).
+    :returns: собранная сводка о входа: профиль, статистика и запасной текст.
+    """
+    name = _user_name(member)
+    summary = JoinSummary()
+
+    # 1. Состояние читаем ДО записей: иначе новичка не отличить от старожила.
+    summary.is_new_globally = not await _knows_user(db, member.id)
+    chat_user = await queries.get_chat_user(db, chat_id, member.id)
+    summary.is_new_in_chat = chat_user is None or _never_active(chat_user)
+    summary.chat_user = chat_user
+
+    # 2. Создаём/обновляем профиль, чат и связку «чат — пользователь».
+    profile = await queries.ensure_user(
+        db, member.id, member.username, member.first_name
+    )
+    await queries.ensure_chat(db, chat_id, chat_title, members_count)
+    await queries.mark_joined(db, chat_id, member.id)
+    summary.profile = profile
+
+    # 3. Запасной текст бота (когда владелец ничего не настроил).
+    if summary.is_new_globally:
+        logger.info("Новый участник %s в чате %s.", member.id, chat_id)
+        summary.fallback_text = profile_service.build_welcome_new_text(name)
+        return summary
+
+    if summary.is_new_in_chat:
+        if profile.ban_marks:
+            logger.info(
+                "У %s есть метки банов в %s чатах.",
+                member.id,
+                len(profile.ban_marks),
+            )
+            summary.fallback_text = profile_service.build_welcome_banned_note_text(
+                profile, name
+            )
+        else:
+            summary.fallback_text = profile_service.build_welcome_new_in_chat_text(name)
+        return summary
+
+    # 4. Возвращение: участник уже был в этом чате.
+    if chat_user is None:  # страховка от гонки: запись обязана существовать
+        chat_user = await queries.ensure_chat_user(db, chat_id, member.id)
+    summary.chat_user = chat_user
+    summary.punishments = list(
+        await queries.get_active_punishments(db, chat_id, member.id)
+    )
+    summary.fallback_text = profile_service.build_welcome_returning_text(
+        profile, chat_user, summary.punishments, name
+    )
+    return summary
+
+
+async def handle_new_member(
+    bot: Bot,
+    db: Database,
+    message: Message,
+    member: User,
+) -> Optional[str]:
+    """Обработать вход одного участника и вернуть стандартный текст.
+
+    Тонкая обёртка над :func:`collect_join_summary` — нужна там, где
+    достаточно текста бота без блоков приветствия.
+
+    :param bot: экземпляр бота.
+    :param db: соединение с базой данных.
     :param message: служебное сообщение о входе.
     :param member: вошедший пользователь.
     :returns: текст ответа бота или ``None``.
     """
-    chat_id = message.chat.id
-    name = _user_name(member)
-
-    is_new_globally = not await _knows_user(db, member.id)
-    chat_user = await queries.get_chat_user(db, chat_id, member.id)
-    is_new_in_chat = chat_user is None or _never_active(chat_user)
-
-    profile = await queries.ensure_user(db, member.id, member.username, member.first_name)
-    await queries.ensure_chat(
+    summary = await collect_join_summary(
+        bot,
         db,
-        chat_id,
-        message.chat.title,
-        await telegram.fetch_members_count(bot, chat_id),
+        message.chat.id,
+        member,
+        chat_title=message.chat.title,
+        members_count=telegram.resolve_members_count(message.chat),
     )
-    await queries.mark_joined(db, chat_id, member.id)
-
-    # 1. Совсем новый пользователь.
-    if is_new_globally:
-        logger.info("Новый участник %s в чате %s.", member.id, chat_id)
-        return profile_service.build_welcome_new_text(name)
-
-    # 2. Бот знает пользователя, но в этом чате он впервые.
-    if is_new_in_chat:
-        if profile.ban_marks:
-            logger.info("У %s есть метки банов в %s чатах.", member.id, len(profile.ban_marks))
-            return profile_service.build_welcome_banned_note_text(profile, name)
-        return profile_service.build_welcome_new_in_chat_text(name)
-
-    # 3. Возвращение: пользователь уже был в этом чате.
-    if chat_user is None:  # страховка от гонки: запись обязана существовать
-        chat_user = await queries.ensure_chat_user(db, chat_id, member.id)
-    active = await queries.get_active_punishments(db, chat_id, member.id)
-    return profile_service.build_welcome_returning_text(profile, chat_user, active, name)
+    return summary.fallback_text
 
 
 def welcome_check_duration(settings: dict[str, Any]) -> int:
@@ -471,7 +547,7 @@ async def restrict_newcomer(
         return False
 
 
-async def handle_anonymous_welcome(
+async def handle_user_join(
     bot: Bot,
     db: Database,
     chat_id: int,
@@ -481,11 +557,21 @@ async def handle_anonymous_welcome(
     chat_title: Optional[str] = None,
     members_count: Optional[int] = None,
 ) -> bool:
-    """Анонимно сообщить о новом участнике и замутить его на проверку.
+    """Обработать вход участника: приветствие, сводка, мут и правила.
 
-    Режим ``welcome_anonymous``: имя, ID и юзернейм вошедшего не
-    показываются — только сводка по репутации и меткам. Новичок получает
-    мут на время проверки, чтобы не успел навредить до решения админов.
+    Настройки чата НЕ исключают друг друга, а складываются:
+
+    1. профиль участника создаётся/обновляется в базе;
+    2. применяется ОДИН мут при входе — с максимальным сроком среди
+       применимых (помеченным, всем новичкам, проверка в анонимном режиме);
+    3. в чат уходит своё приветствие владельца (``greeting_enabled``), а
+       следом одним сообщением — сводка по участнику
+       (``greeting_show_profile``) или анонимная сводка
+       (``welcome_anonymous``) вместе с инфо о муте;
+    4. правила отправляются отдельным сообщением (``rules_show_on_join``).
+
+    Анонимный режим влияет только на сводку: имя, ID и юзернейм новичка в
+    ней не показываются, а своё приветствие владельца уходит как есть.
 
     :param bot: экземпляр бота.
     :param db: соединение с базой данных.
@@ -494,57 +580,119 @@ async def handle_anonymous_welcome(
     :param settings: настройки чата.
     :param chat_title: название чата (для записи в базу).
     :param members_count: число участников чата (если известно).
-    :returns: ``True``, если анонимное уведомление отправлено.
+    :returns: ``True``, если в чат ушло хотя бы одно сообщение.
     """
-    check_seconds = welcome_check_duration(settings)
+    anonymous = bool(settings.get(config.WELCOME_ANONYMOUS_KEY))
+    name = _user_name(member)
 
-    # Профиль читаем ДО создания записи: иначе «новый аккаунт» уже не
-    # отличить от давно известного.
-    profile: Optional[UserProfile] = None
+    # 1. Профиль, чат и связка «чат — пользователь» плюс данные для сводки.
+    summary: Optional[JoinSummary] = None
     try:
-        profile = await queries.get_user(db, member.id)
-    except Exception as exc:  # noqa: BLE001
-        error_handler.log_exception("чтении профиля нового участника", exc)
-    is_new_globally = profile is None
-
-    try:
-        await queries.ensure_chat(db, chat_id, chat_title, members_count)
-        await queries.mark_joined(db, chat_id, member.id)
-        profile = await queries.ensure_user(
-            db, member.id, member.username, member.first_name
+        summary = await collect_join_summary(
+            bot,
+            db,
+            chat_id,
+            member,
+            chat_title=chat_title,
+            members_count=members_count,
         )
-    except Exception as exc:  # noqa: BLE001 - сводка важнее записей в базе
-        error_handler.log_exception("записи анонимного входа", exc)
+    except Exception as exc:  # noqa: BLE001 - сводка не важнее приветствия
+        error_handler.log_exception("записи входа участника", exc)
 
-    # Единый мут при входе: проверочный плюс (если включены) мут всем
-    # новичкам и превентивный мут помеченным. Применяется один restrict —
-    # с максимальным сроком из применимых.
-    applied = await apply_entry_mute(
-        bot, db, chat_id, member, settings, check_seconds=check_seconds
+    # 2. Мут при входе: помеченным, всем новичкам или проверочный (анонимный
+    #    режим). apply_entry_mute ставит ровно один restrict — с максимальным
+    #    сроком из применимых.
+    applied: Optional[tuple[str, int]] = None
+    try:
+        applied = await apply_entry_mute(
+            bot,
+            db,
+            chat_id,
+            member,
+            settings,
+            check_seconds=welcome_check_duration(settings) if anonymous else 0,
+        )
+    except Exception as exc:  # noqa: BLE001 - мут не важнее приветствия
+        error_handler.log_exception("муте при входе", exc)
+
+    # 3. Блок 1: своё приветствие владельца (текст + фото + кнопки).
+    greeting_sent = False
+    try:
+        greeting_sent = await rules_ui.send_custom_greeting(
+            bot, db, chat_id, settings, member
+        )
+    except Exception as exc:  # noqa: BLE001 - приветствие не роняет вход
+        error_handler.log_exception("отправке своего приветствия", exc)
+
+    # 4. Блоки 2 и 3: сводка и инфо о муте уходят одним сообщением.
+    blocks: list[str] = []
+    show_profile = rules_ui.setting_flag(
+        settings, rules_ui.GREETING_PROFILE_KEY, "welcome_show_profile"
     )
-    muted = applied is not None
-    duration = applied[1] if applied is not None else check_seconds
+    if anonymous:
+        blocks.append(
+            profile_service.build_anonymous_profile_summary(
+                summary.profile if summary is not None else None,
+                is_new_globally=bool(summary.is_new_globally) if summary else False,
+            )
+        )
+    elif show_profile and summary is not None:
+        blocks.append(
+            profile_service.build_join_profile_summary(
+                summary.profile,
+                summary.chat_user,
+                member,
+                punishments=summary.punishments,
+                is_new_globally=summary.is_new_globally,
+                is_new_in_chat=summary.is_new_in_chat,
+                fallback_name=name,
+            )
+        )
+    elif not greeting_sent and summary is not None and summary.fallback_text:
+        # Владелец ничего не настроил — работает стандартное приветствие.
+        blocks.append(summary.fallback_text)
+
+    if applied is not None:
+        reason, duration = applied
+        blocks.append(
+            profile_service.build_entry_mute_notice_text(
+                duration,
+                reason=reason,
+                anonymous=anonymous,
+                name=name,
+            )
+        )
+
+    sent = greeting_sent
+    if blocks:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                text="\n\n".join(blocks),
+                parse_mode=ParseMode.HTML,
+            )
+            sent = True
+        except Exception as exc:  # noqa: BLE001 - сводка не роняет вход
+            logger.error(
+                "Не смогла отправить сводку о входе в чат %s: %s", chat_id, exc
+            )
+
+    # 5. Правила — отдельным сообщением (если включены).
+    try:
+        if await rules_ui.send_rules_on_join(bot, db, chat_id, settings, member):
+            sent = True
+    except Exception as exc:  # noqa: BLE001 - правила не важнее приветствия
+        error_handler.log_exception("отправке правил при входе", exc)
+
     logger.info(
-        "Анонимный вход: участник %s в чате %s, мут %s секунд (%s).",
+        "Вход участника %s в чате %s: приветствие=%s, анонимно=%s, мут=%s.",
         member.id,
         chat_id,
-        duration,
-        "ок" if muted else "не удалось",
+        "да" if greeting_sent else "нет",
+        "да" if anonymous else "нет",
+        applied[1] if applied is not None else "нет",
     )
-
-    text = profile_service.build_anonymous_welcome_text(
-        None if is_new_globally else profile,
-        duration,
-        muted=muted,
-    )
-    try:
-        await bot.send_message(chat_id=chat_id, text=text)
-    except Exception as exc:  # noqa: BLE001
-        logger.error(
-            "Не смогла отправить анонимное приветствие в чат %s: %s", chat_id, exc
-        )
-        return False
-    return True
+    return sent
 
 
 def join_mute_duration(settings: dict[str, Any]) -> int:
@@ -851,9 +999,11 @@ async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
     """Поприветствовать новых участников и применить антирейд.
 
     Служебное сообщение о входе удаляется (настройка
-    ``delete_service_messages``), а при включённом ``welcome_anonymous``
-    вместо обычного приветствия уходит анонимная сводка, и новичок
-    получает мут на время проверки.
+    ``delete_service_messages``), а каждый вход обрабатывает
+    :func:`handle_user_join`: своё приветствие владельца, сводка по участнику
+    (в анонимном режиме — без имени и ID), инфо о муте и правила. Сводка и
+    инфо о муте уходят одним сообщением — настройки складываются, а не
+    заменяют друг друга.
 
     :param message: служебное сообщение о входе.
     :param db: соединение с базой данных.
@@ -869,28 +1019,6 @@ async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
         # приветствием, а лишний шум в чате не нужен.
         await delete_service_message(message, settings)
 
-        # Анонимный режим: личность новичка не раскрываем, вместо обычного
-        # приветствия уходит сводка, а сам новичок уходит в проверочный мут.
-        if bool(settings.get(config.WELCOME_ANONYMOUS_KEY)):
-            for member in message.new_chat_members:
-                if member.is_bot:
-                    continue
-                try:
-                    await handle_anonymous_welcome(
-                        bot,
-                        db,
-                        chat_id,
-                        member,
-                        settings,
-                        chat_title=message.chat.title,
-                        members_count=telegram.resolve_members_count(message.chat),
-                    )
-                except Exception as exc:  # noqa: BLE001 - один вход не ломает других
-                    error_handler.log_exception(
-                        f"анонимном приветствии участника {member.id}", exc
-                    )
-            return
-
         antiraid_enabled = bool(settings.get("antiraid_enabled", settings.get("antiraid")))
 
         replies: list[str] = []
@@ -899,46 +1027,21 @@ async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
             if member.is_bot:
                 continue
 
-            # Своё приветствие владельца (текст + премиум-эмодзи + фото + кнопки)
-            # заменяет стандартный текст бота.
-            custom_greeting_sent = await rules_ui.send_custom_greeting(
-                bot, db, chat_id, settings, member
-            )
-
-            greeting = await handle_new_member(bot, db, message, member)
-            show_profile = rules_ui.setting_flag(
-                settings, rules_ui.GREETING_PROFILE_KEY, "welcome_show_profile"
-            )
-            if greeting and (not custom_greeting_sent or show_profile):
-                replies.append(greeting)
-
-            # Правила при входе: свёрнутая цитата с данными новичка.
+            # Приветствие + сводка + мут + правила: один вход — один вызов.
             try:
-                await rules_ui.send_rules_on_join(bot, db, chat_id, settings, member)
-            except Exception as exc:  # noqa: BLE001 - правила не важнее приветствия
-                error_handler.log_exception("отправке правил при входе", exc)
-
-            # Превентивные муты: помеченным и всем новым участникам (если
-            # включены). apply_entry_mute применяет один мут — с наибольшим
-            # сроком из применимых.
-            try:
-                applied = await apply_entry_mute(bot, db, chat_id, member, settings)
-                if applied is not None:
-                    reason, duration = applied
-                    if reason == config.MARKED_MUTE_REASON:
-                        replies.append(
-                            profile_service.build_marked_mute_notice_text(
-                                _user_name(member), duration
-                            )
-                        )
-                    else:
-                        replies.append(
-                            profile_service.build_join_mute_notice_text(
-                                _user_name(member), duration
-                            )
-                        )
-            except Exception as exc:  # noqa: BLE001 - мут не важнее приветствия
-                error_handler.log_exception("превентивном муте новичка", exc)
+                await handle_user_join(
+                    bot,
+                    db,
+                    chat_id,
+                    member,
+                    settings,
+                    chat_title=message.chat.title,
+                    members_count=telegram.resolve_members_count(message.chat),
+                )
+            except Exception as exc:  # noqa: BLE001 - один вход не ломает других
+                error_handler.log_exception(
+                    f"обработке входа участника {member.id}", exc
+                )
 
             if not antiraid_enabled:
                 continue

@@ -446,29 +446,84 @@ def build_welcome_returning_text(
     return "\n".join(lines)
 
 
-def build_leave_text(name: str) -> str:
-    """Строка прощания для участника, покинувшего чат.
-
-    :param name: имя пользователя.
-    """
-    return f"👋 <b>{escape_text(name)}</b> покинул(а) чат~"
-
-
-def build_anonymous_welcome_text(
+def build_join_profile_summary(
     profile: Optional[UserProfile],
-    duration_seconds: int,
+    chat_user: Optional[ChatUser],
+    member: object,
     *,
-    muted: bool = True,
+    punishments: Sequence[Punishment] = (),
+    is_new_globally: bool = False,
+    is_new_in_chat: bool = False,
+    fallback_name: str = "",
 ) -> str:
-    """Анонимное уведомление о новом участнике — без имени, ID и юзернейма.
+    """Блок «сводка по участнику» для сообщения о входе — с именем и ID.
+
+    Используется настройкой ``greeting_show_profile``: сводка идёт ВМЕСТЕ с
+    приветствием, а не вместо него. Приватность соблюдена: юзернейм не
+    показывается, только ``first_name`` внутри ссылки ``tg://user``.
+
+    :param profile: глобальный профиль участника (может отсутствовать).
+    :param chat_user: локальная статистика в чате (может отсутствовать).
+    :param member: объект пользователя Telegram (``User``).
+    :param punishments: активные наказания участника в этом чате.
+    :param is_new_globally: профиля не было в базе до этого входа.
+    :param is_new_in_chat: участник впервые в этом чате.
+    :param fallback_name: имя из Telegram, если в базе его ещё нет.
+    """
+    user_id = int(getattr(member, "id", 0) or (profile.user_id if profile else 0) or 0)
+    fallback = (
+        fallback_name
+        or str(getattr(member, "full_name", "") or "")
+        or str(getattr(member, "first_name", "") or "")
+    )
+    name = display_name(profile, fallback or "Незнакомец")
+
+    lines = [f"📊 <b>Сводка по</b> {user_mention(name, user_id)}:"]
+    lines.append(f"🆔 ID: <code>{user_id}</code>")
+
+    reputation = int(profile.reputation or 0) if profile is not None else 0
+    lines.append(f"⭐ Репутация: {reputation} {reputation_scale(reputation)}")
+
+    messages = chat_user.messages_count if chat_user is not None else 0
+    lines.append(f"💬 Сообщений: {format_number(messages)}")
+    if chat_user is not None:
+        lines.append(f"⚠️ Предупреждения: {chat_user.warns_count}/{config.MAX_WARNS}")
+
+    marks = len(profile.ban_marks or []) if profile is not None else 0
+    if marks > 0:
+        lines.append(f"🏷 Метки банов: {marks} чатов")
+    if profile is not None and profile.is_spammer:
+        lines.append("🚫 Метка: спамер")
+    if profile is not None and profile.is_globally_banned:
+        lines.append("🔨 Глобальный бан")
+
+    for punishment in punishments:
+        reason = escape_text(punishment.reason) if punishment.reason else "не указана"
+        lines.append(
+            f"🚷 {punishment.type_title}: {format_left(punishment.expires_at)} "
+            f"(причина: {reason})"
+        )
+
+    if is_new_globally:
+        lines.append("✨ Впервые в моей базе")
+    elif is_new_in_chat:
+        lines.append("✨ Впервые в этом чате")
+    return "\n".join(lines)
+
+
+def build_anonymous_profile_summary(
+    profile: Optional[UserProfile],
+    *,
+    is_new_globally: bool = False,
+) -> str:
+    """Анонимная сводка о новом участнике — без имени, ID и юзернейма.
 
     Используется режимом ``welcome_anonymous``: бот не раскрывает личность
     вошедшего, зато показывает его репутацию и метки, чтобы чат понимал,
-    кого стоит проверять.
+    кого стоит проверять. Сводка дополняет приветствие, а не заменяет его.
 
     :param profile: глобальный профиль участника (``None`` — данных нет).
-    :param duration_seconds: длительность проверочного мута.
-    :param muted: удалось ли действительно замутить новичка.
+    :param is_new_globally: профиля не было в базе до этого входа.
     """
     lines = ["👤 Зашёл новый пользователь!", ""]
 
@@ -492,15 +547,48 @@ def build_anonymous_welcome_text(
             lines.append("🚫 Метка: спамер")
         if profile.is_globally_banned:
             lines.append("🔨 Глобальный бан")
+        if is_new_globally:
+            lines.append("✨ Впервые в моей базе")
+    return "\n".join(lines)
 
-    lines.append("")
+
+def build_leave_text(name: str) -> str:
+    """Строка прощания для участника, покинувшего чат.
+
+    :param name: имя пользователя.
+    """
+    return f"👋 <b>{escape_text(name)}</b> покинул(а) чат~"
+
+
+def build_anonymous_welcome_text(
+    profile: Optional[UserProfile],
+    duration_seconds: int,
+    *,
+    muted: bool = True,
+    is_new_globally: bool = False,
+) -> str:
+    """Анонимное уведомление о новом участнике — сводка и инфо о муте.
+
+    Совместимая обёртка: сводка берётся из
+    :func:`build_anonymous_profile_summary`, строка о муте — из
+    :func:`build_entry_mute_notice_text`. Имя, ID и юзернейм вошедшего не
+    показываются.
+
+    :param profile: глобальный профиль участника (``None`` — данных нет).
+    :param duration_seconds: длительность проверочного мута.
+    :param muted: удалось ли действительно замутить новичка.
+    :param is_new_globally: профиля не было в базе до этого входа.
+    """
+    summary = build_anonymous_profile_summary(
+        profile, is_new_globally=is_new_globally
+    )
     if muted:
-        lines.append(
+        notice = (
             f"🔇 Мут на {time_parser.format_duration(duration_seconds)} для проверки"
         )
     else:
-        lines.append("🔇 Мут не удалось поставить — проверь мои права 🙏")
-    return "\n".join(lines)
+        notice = "🔇 Мут не удалось поставить — проверь мои права 🙏"
+    return f"{summary}\n\n{notice}"
 
 
 def build_antiraid_kick_text(name: str) -> str:
@@ -953,6 +1041,13 @@ def build_greeting_menu_text(chat: ChatInfo, settings: dict[str, object]) -> str
     ]
     if has_content:
         lines.extend(["", "<b>Превью:</b>", escape_text(rich_text_snippet(text))])
+    lines.extend(
+        [
+            "",
+            "💡 Настройки складываются: своё приветствие, сводка (или",
+            "анонимная сводка без имени) и инфо о муте уходят вместе~",
+        ]
+    )
     lines.extend(["", f"Команда предпросмотра: .{config.COMMAND_GREETING}"])
     return "\n".join(lines)
 
@@ -1186,6 +1281,10 @@ def is_marked_profile(profile: UserProfile) -> bool:
 def build_marked_mute_notice_text(name: str, duration_seconds: int) -> str:
     """Сообщение в чат о превентивном муте.
 
+    Блок сообщения о входе собирает :func:`build_entry_mute_notice_text`:
+    он умеет скрывать имя в анонимном режиме. Эта функция остаётся для
+    мест, где участника можно называть по имени.
+
     :param name: имя участника (экранируется).
     :param duration_seconds: срок мута в секундах.
     """
@@ -1199,6 +1298,10 @@ def build_marked_mute_notice_text(name: str, duration_seconds: int) -> str:
 def build_join_mute_notice_text(name: str, duration_seconds: int) -> str:
     """Сообщение в чат о муте при входе для всех новичков.
 
+    Блок сообщения о входе собирает :func:`build_entry_mute_notice_text`:
+    он умеет скрывать имя в анонимном режиме. Эта функция остаётся для
+    мест, где участника можно называть по имени.
+
     :param name: имя участника (экранируется).
     :param duration_seconds: срок мута в секундах.
     """
@@ -1207,6 +1310,42 @@ def build_join_mute_notice_text(name: str, duration_seconds: int) -> str:
         "📝 Причина: мут для всех новичков\n"
         "⏱ Срок: {}"
     ).format(escape_text(name), time_parser.format_duration(duration_seconds))
+
+
+#: Подписи причин мута при входе для блока в сообщении о входе.
+ENTRY_MUTE_REASON_LABELS: Final[dict[str, str]] = {
+    config.MARKED_MUTE_REASON: "подозрительный аккаунт (метки банов)",
+    config.JOIN_MUTE_REASON: "мут для всех новичков",
+    config.WELCOME_CHECK_REASON: "проверка нового участника",
+}
+
+
+def build_entry_mute_notice_text(
+    duration_seconds: int,
+    *,
+    reason: str = "",
+    anonymous: bool = False,
+    name: str = "",
+) -> str:
+    """Блок «инфо о муте» для сообщения о входе участника.
+
+    Уходит ВМЕСТЕ с приветствием и сводкой, а не вместо них. В анонимном
+    режиме имя участника не показывается: личность новичка не раскрываем.
+
+    :param duration_seconds: срок мута в секундах.
+    :param reason: причина мута из :func:`apply_entry_mute` (``events``).
+    :param anonymous: анонимный режим — имя скрыто.
+    :param name: имя участника (экранируется), если его можно показывать.
+    """
+    label = ENTRY_MUTE_REASON_LABELS.get(reason, "")
+    if anonymous or not name:
+        lines = ["🔇 Новый участник получил мут"]
+    else:
+        lines = [f"🔇 Новый участник <b>{escape_text(name)}</b> получил мут"]
+    lines.append(f"⏱ Срок: {time_parser.format_duration(duration_seconds)}")
+    if label:
+        lines.append(f"📝 Причина: {label}")
+    return "\n".join(lines)
 
 
 def build_content_saved_text(kind: str) -> str:
@@ -1244,8 +1383,12 @@ def build_greeting_disabled_text() -> str:
 
 
 def build_greeting_preview_note_text() -> str:
-    """Пояснение к предпросмотру приветствия."""
-    return "👀 Так увидят приветствие новые участники (имя подставится само~):"
+    """Пояснение к предпросмотру приветствия.
+
+    Сам предпросмотр — ровно текст владельца: бот ничего не добавляет
+    «от себя», поэтому шапки вида «Привет, имя» здесь не бывает.
+    """
+    return "👁 Превью приветствия — так увидят его новые участники:"
 
 
 def build_greeting_dm_failed_text() -> str:
