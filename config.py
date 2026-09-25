@@ -35,9 +35,9 @@ BOT_NAME: Final[str] = "YamoChan"
 #: Версия бота — показывается в логах, приветствии ``/start`` и справке.
 BOT_VERSION: Final[str] = "1.0.0"
 
-#: Путь к файлу базы данных SQLite.
+#: Путь к файлу базы данных SQLite (в подпапке database/, как в стабильных проектах).
 DB_PATH: Final[Path] = Path(
-    os.getenv("DB_PATH", str(BASE_DIR / "yamochan.db"))
+    os.getenv("DB_PATH", str(BASE_DIR / "database" / "yamochan.db"))
 ).expanduser()
 
 #: Часовой пояс всего проекта — только UTC.
