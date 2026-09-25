@@ -26,10 +26,10 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
 
-from . import config
-from .database.db import Database
-from .database import queries
-from .handlers import (
+from import config
+from database.db import Database
+from database import queries
+from handlers import (
     admin_panel,
     antiraid,
     call,
@@ -42,9 +42,9 @@ from .handlers import (
     rules,
     start,
 )
-from .services import call as call_service
-from .services import punishment
-from .utils import error_handler
+from services import call as call_service
+from services import punishment
+from utils import error_handler
 
 logger = logging.getLogger(__name__)
 
