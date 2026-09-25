@@ -509,23 +509,3 @@ async def process_expired_punishments(bot: Bot, db: Database, limit: int = 50) -
     if processed:
         logger.info("Автоматически снято истёкших наказаний: %d", processed)
     return processed
-
-
-async def mute_newcomer_for_antiraid(
-    bot: Bot,
-    db: Database,
-    chat_id: int,
-    user_id: int,
-    target_name: str,
-) -> PunishmentResult:
-    """Замутить новичка на время антирейда."""
-    return await mute_user(
-        bot,
-        db,
-        chat_id,
-        user_id,
-        target_name,
-        config.ANTIRAID_MUTE_SECONDS,
-        "Антирейд: проверка новичка 🛡",
-        None,
-    )

@@ -12,7 +12,11 @@
       ``join_mute_*`` — всем): применяется ровно один мут с максимальным
       сроком из применимых;
     * пометку выхода из чата без потери данных;
-    * антирейд: мут новичков на 10 минут и кик при всплеске входов;
+    * антирейд: реакция только на подтверждённую атаку — мут подозрительных
+      в момент фиксации рейда (:func:`apply_raid_protection`) и кик при
+      всплеске входов. В обычном режиме ожидания антирейд никого не мутит:
+      мут при входе настраивается отдельно (``marked_mute_*``,
+      ``join_mute_*``, ``welcome_anonymous``);
     * удаление служебных сообщений (``delete_service_messages``);
     * определение владельца чата при добавлении бота.
 
@@ -907,11 +911,18 @@ async def apply_antiraid(
     chat_id: int,
     member: User,
 ) -> Optional[str]:
-    """Применить антирейд к новому участнику.
+    """Реакция антирейда на всплеск входов: кик вероятного «рейдера».
 
-    Если за последнюю минуту вошло больше
-    :data:`config.ANTIRAID_JOIN_LIMIT` человек — новичок кикается,
-    иначе он получает мут на :data:`config.ANTIRAID_MUTE_SECONDS` секунд.
+    Антирейд сам по себе мутов не выдаёт. Если за последнее окно вошло
+    больше :data:`config.ANTIRAID_JOIN_LIMIT` человек — новичок кикается как
+    участник атаки, иначе он просто входит: никаких ограничений «по
+    умолчанию» антирейд не накладывает.
+
+    Мут при входе настраивается отдельно и применяется в
+    :func:`handle_user_join`: ``marked_mute_enabled`` (помеченным),
+    ``join_mute_enabled`` (всем новичкам) и ``welcome_anonymous``
+    (проверочный мут). Мут всех подозрительных антирейд выдаёт только
+    в момент фиксации рейда — :func:`apply_raid_protection`.
 
     :param bot: экземпляр бота.
     :param db: соединение с базой данных.
@@ -942,8 +953,9 @@ async def apply_antiraid(
         )
         return profile_service.build_antiraid_kick_text(name)
 
-    result = await punishment.mute_newcomer_for_antiraid(bot, db, chat_id, member.id, name)
-    return result.message
+    # Обычный вход: антирейд никого не ограничивает. Мут при входе — это
+    # отдельные настройки чата, они уже применены в handle_user_join.
+    return None
 
 
 async def apply_raid_protection(
@@ -1053,14 +1065,19 @@ async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
                     replies.append(raid_note)
                 continue
 
-            # 2. Чат уже под защитой: новичок сразу становится подозрительным.
+            # 2. Рейд уже зафиксирован, защита не снята: новичок — вероятный
+            #    участник атаки, поэтому он получает мут до решения владельца.
+            #    Это состояние активного рейда, а не обычное ожидание: в
+            #    режиме ожидания антирейд никого не мутит.
             if manager.is_under_protection(chat_id):
                 await antiraid_service.mute_member(bot, db, chat_id, member.id)
                 await queries.mark_raid_suspects(db, chat_id, [member.id])
                 manager.remember_suspects(chat_id, [member.id])
                 continue
 
-            # 3. Обычный вход: прежние правила (кик при всплеске или мут новичка).
+            # 3. Обычный вход: антирейд только кикает при всплеске входов и
+            #    больше ничего не делает — мут при входе настраивается
+            #    отдельно (join_mute / marked_mute / анонимный привет).
             antiraid_note = await apply_antiraid(bot, db, chat_id, member)
             if antiraid_note:
                 replies.append(antiraid_note)
