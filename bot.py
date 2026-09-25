@@ -26,7 +26,7 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
 
-from import config
+import config
 from database.db import Database
 from database import queries
 from handlers import (
