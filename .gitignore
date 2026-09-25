@@ -1,0 +1,15 @@
+.env
+.env.local
+*.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+database/*.db
+backups/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.vscode/
+*.log
