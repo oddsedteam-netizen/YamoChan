@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 from typing import Any, Final, Mapping, Optional, Sequence
 
 import config
-from . import models
-from .db import Database
-from .models import (
+from database import models
+from database.db import Database
+from database.models import (
     AdminBan,
     AdminLogEntry,
     ChatInfo,

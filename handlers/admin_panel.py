@@ -26,15 +26,15 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, Message
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import UserProfile, escape_text, utcnow
-from ..keyboards import inline
-from ..services import admin as admin_service
-from ..services import antiraid as antiraid_service
-from ..services import complaints as complaints_service
-from ..services import permissions, richtext
-from ..utils import command_filter, error_handler, html_utils, telegram
+from database import queries
+from database.db import Database
+from database.models import UserProfile, escape_text, utcnow
+from keyboards import inline
+from services import admin as admin_service
+from services import antiraid as antiraid_service
+from services import complaints as complaints_service
+from services import permissions, richtext
+from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 

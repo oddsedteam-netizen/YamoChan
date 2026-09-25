@@ -19,10 +19,10 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatMember, Message
 
 import config
-from ..config import ADMIN_CACHE_TTL, MAX_CHATS_FOR_OWNER_SYNC, SUPERADMIN_IDS
-from ..database import queries
-from ..database.db import Database
-from ..database.models import ChatInfo
+from config import ADMIN_CACHE_TTL, MAX_CHATS_FOR_OWNER_SYNC, SUPERADMIN_IDS
+from database import queries
+from database.db import Database
+from database.models import ChatInfo
 
 logger = logging.getLogger(__name__)
 

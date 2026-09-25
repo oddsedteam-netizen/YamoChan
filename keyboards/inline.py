@@ -31,9 +31,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from ..database.models import ChatInfo
-from ..services import richtext, time_parser
-from ..utils import faq_texts
+from database.models import ChatInfo
+from services import richtext, time_parser
+from utils import faq_texts
 
 logger = logging.getLogger(__name__)
 

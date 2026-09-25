@@ -29,11 +29,11 @@ from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..services import antiraid as antiraid_service
-from ..services import permissions, profile as profile_service, punishment, time_parser
-from ..utils import command_filter, error_handler, telegram
+from database import queries
+from database.db import Database
+from services import antiraid as antiraid_service
+from services import permissions, profile as profile_service, punishment, time_parser
+from utils import command_filter, error_handler, telegram
 
 logger = logging.getLogger(__name__)
 

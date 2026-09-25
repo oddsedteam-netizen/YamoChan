@@ -32,12 +32,12 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import escape_text
-from ..services import permissions as permissions_service
-from ..services import profile as profile_service
-from . import richtext, time_parser
+from database import queries
+from database.db import Database
+from database.models import escape_text
+from services import permissions as permissions_service
+from services import profile as profile_service
+from services import richtext, time_parser
 
 logger = logging.getLogger(__name__)
 

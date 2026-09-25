@@ -14,7 +14,7 @@ from typing import Any, Final, Mapping, Optional, Sequence
 
 #: Модуль экранирования — чистый (только stdlib), поэтому models остаётся
 #: автономным: см. комментарий про UTC ниже.
-from ..utils import html_utils
+from utils import html_utils
 
 #: Часовой пояс проекта (дублируется из config, чтобы models оставался автономным).
 UTC: Final[timezone] = timezone.utc

@@ -29,10 +29,10 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardMarkup
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import Complaint, escape_text
-from . import admin as admin_service, profile as profile_service
+from database import queries
+from database.db import Database
+from database.models import Complaint, escape_text
+from services import admin as admin_service, profile as profile_service
 
 logger = logging.getLogger(__name__)
 

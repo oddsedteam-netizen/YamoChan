@@ -27,12 +27,12 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
-from ..database import queries
-from ..database.db import Database
-from ..database.models import ChatInfo, UserProfile
-from ..keyboards import inline
-from ..services import permissions, profile as profile_service
-from ..utils import command_filter, error_handler, html_utils, telegram
+from database import queries
+from database.db import Database
+from database.models import ChatInfo, UserProfile
+from keyboards import inline
+from services import permissions, profile as profile_service
+from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 

@@ -34,15 +34,15 @@ from aiogram.types import (
 )
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import ChatUser, UserProfile, utcnow
-from ..services import admin as admin_service
-from ..services import antiraid as antiraid_service
-from ..services import permissions, profile as profile_service, punishment
-from ..utils import command_filter, error_handler, telegram
-from . import antiraid as antiraid_ui
-from . import rules as rules_ui
+from database import queries
+from database.db import Database
+from database.models import ChatUser, UserProfile, utcnow
+from services import admin as admin_service
+from services import antiraid as antiraid_service
+from services import permissions, profile as profile_service, punishment
+from utils import command_filter, error_handler, telegram
+from handlers import antiraid as antiraid_ui
+from handlers import rules as rules_ui
 
 logger = logging.getLogger(__name__)
 

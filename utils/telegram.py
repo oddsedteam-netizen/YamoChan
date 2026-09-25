@@ -19,7 +19,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import InlineKeyboardMarkup, Message
 
-from . import html_utils
+from utils import html_utils
 
 logger = logging.getLogger(__name__)
 

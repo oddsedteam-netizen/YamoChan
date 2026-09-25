@@ -24,14 +24,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import Complaint
-from ..keyboards import inline
-from ..services import admin as admin_service
-from ..services import complaints as complaints_service
-from ..services import profile as profile_service, richtext
-from ..utils import error_handler, html_utils, telegram
+from database import queries
+from database.db import Database
+from database.models import Complaint
+from keyboards import inline
+from services import admin as admin_service
+from services import complaints as complaints_service
+from services import profile as profile_service, richtext
+from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 

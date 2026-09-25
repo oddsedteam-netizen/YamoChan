@@ -22,8 +22,8 @@ from typing import Final, Optional
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from ..keyboards import inline
-from ..utils import error_handler, faq_texts, html_utils, telegram
+from keyboards import inline
+from utils import error_handler, faq_texts, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 

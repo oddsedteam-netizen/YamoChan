@@ -26,9 +26,9 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardMarkup
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import (
+from database import queries
+from database.db import Database
+from database.models import (
     AdminBan,
     AdminLogEntry,
     ChatInfo,
@@ -36,8 +36,8 @@ from ..database.models import (
     escape_text,
     utcnow,
 )
-from . import profile as profile_service, richtext
-from ..utils import telegram
+from services import profile as profile_service, richtext
+from utils import telegram
 
 logger = logging.getLogger(__name__)
 

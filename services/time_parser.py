@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Final, Optional, Sequence
 
-config import MAX_PUNISH_TIME_SECONDS, MIN_PUNISH_TIME_SECONDS
+from config import MAX_PUNISH_TIME_SECONDS, MIN_PUNISH_TIME_SECONDS
 
 # ---------------------------------------------------------------------------
 # Единицы измерения

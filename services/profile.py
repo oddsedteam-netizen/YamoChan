@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Final, Iterable, Optional, Sequence
 
 import config
-from ..database.models import (
+from database.models import (
     ChatInfo,
     ChatUser,
     Punishment,
@@ -20,7 +20,7 @@ from ..database.models import (
     escape_text,
     utcnow,
 )
-from . import richtext, time_parser
+from services import richtext, time_parser
 
 #: Эмодзи палитры репутации: от «плохо» к «отлично».
 REPUTATION_EMOJI: tuple[str, ...] = ("🔴", "🟠", "🟡", "🟢", "⚪")

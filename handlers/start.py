@@ -16,13 +16,13 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import ChatInfo
-from ..keyboards import inline
-from ..services import antiraid as antiraid_service
-from ..services import permissions, profile as profile_service
-from ..utils import error_handler
+from database import queries
+from database.db import Database
+from database.models import ChatInfo
+from keyboards import inline
+from services import antiraid as antiraid_service
+from services import permissions, profile as profile_service
+from utils import error_handler
 
 logger = logging.getLogger(__name__)
 

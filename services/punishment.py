@@ -18,10 +18,10 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatPermissions
 
 import config
-from ..database import queries
-from ..database.db import Database
-from ..database.models import Punishment, utcnow
-from . import time_parser
+from database import queries
+from database.db import Database
+from database.models import Punishment, utcnow
+from services import time_parser
 
 logger = logging.getLogger(__name__)
 
