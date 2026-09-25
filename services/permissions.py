@@ -18,7 +18,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import ChatMember, Message
 
-from .. import config
+import config
 from ..config import ADMIN_CACHE_TTL, MAX_CHATS_FOR_OWNER_SYNC, SUPERADMIN_IDS
 from ..database import queries
 from ..database.db import Database

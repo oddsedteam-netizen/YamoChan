@@ -19,7 +19,7 @@ from typing import Final, Optional
 from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..database.models import ChatInfo

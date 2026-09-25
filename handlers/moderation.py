@@ -28,7 +28,7 @@ from aiogram.enums import ChatType
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..services import antiraid as antiraid_service

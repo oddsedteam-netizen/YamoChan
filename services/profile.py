@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Final, Iterable, Optional, Sequence
 
-from .. import config
+import config
 from ..database.models import (
     ChatInfo,
     ChatUser,

@@ -30,7 +30,7 @@ from typing import Any, Final, Iterable, Optional, Sequence
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from .. import config
+import config
 from ..database.models import ChatInfo
 from ..services import richtext, time_parser
 from ..utils import faq_texts

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from .. import config
+import config
 
 #: Заголовок главного экрана FAQ.
 FAQ_TITLE: Final[str] = "❓ FAQ — как пользоваться YamoChan"

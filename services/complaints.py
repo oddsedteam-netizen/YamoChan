@@ -28,7 +28,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import InlineKeyboardMarkup
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..database.models import Complaint, escape_text

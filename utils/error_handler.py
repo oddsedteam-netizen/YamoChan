@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Final, Optional
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.types import CallbackQuery, ErrorEvent, Message, TelegramObject
 
-from .. import config
+import config
 
 logger = logging.getLogger(__name__)
 

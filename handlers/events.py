@@ -33,7 +33,7 @@ from aiogram.types import (
     User,
 )
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..database.models import ChatUser, UserProfile, utcnow

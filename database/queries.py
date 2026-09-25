@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Final, Mapping, Optional, Sequence
 
-from .. import config
+import config
 from . import models
 from .db import Database
 from .models import (

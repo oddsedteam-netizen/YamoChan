@@ -25,7 +25,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, Message
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..database.models import UserProfile, escape_text, utcnow

@@ -41,7 +41,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from .. import config
+import config
 from ..utils import html_utils
 
 logger = logging.getLogger(__name__)

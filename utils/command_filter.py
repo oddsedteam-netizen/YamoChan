@@ -23,7 +23,7 @@ from typing import Any, Final, Mapping, Optional
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
-from .. import config
+import config
 
 #: Префиксы, с которых может начинаться команда.
 COMMAND_PREFIXES: Final[tuple[str, ...]] = (".", "/", "!")

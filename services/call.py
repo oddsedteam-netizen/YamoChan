@@ -31,7 +31,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 
-from .. import config
+import config
 from ..database import queries
 from ..database.db import Database
 from ..database.models import escape_text
