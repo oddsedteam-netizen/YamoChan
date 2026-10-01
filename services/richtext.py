@@ -31,7 +31,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
@@ -42,7 +42,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
-from utils import html_utils
+from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
@@ -812,36 +812,60 @@ async def send_content(
 
     stored = entities_from_json(content.entities)
     entities = stored or None
-    attempts: list[tuple[Optional[list[MessageEntity]], Optional[ParseMode]]] = []
+    attempts_list: list[tuple[Optional[list[MessageEntity]], Optional[ParseMode]]] = []
     if entities:
         # Сначала как есть (с премиум-эмодзи), затем — без форматирования.
-        attempts.append((entities, None))
-        attempts.append((None, None))
+        attempts_list.append((entities, None))
+        attempts_list.append((None, None))
     elif html_fallback:
         # Текст владельца мог быть набран с HTML-разметкой вручную.
-        attempts.append((None, ParseMode.HTML))
-        attempts.append((None, None))
+        attempts_list.append((None, ParseMode.HTML))
+        attempts_list.append((None, None))
     else:
-        attempts.append((None, None))
+        attempts_list.append((None, None))
 
-    for index, (entities_attempt, parse_mode) in enumerate(attempts):
+    for index, (entities_attempt, parse_mode) in enumerate(attempts_list):
         try:
-            await _send_once(
-                bot,
-                chat_id,
-                content,
-                entities_attempt,
-                parse_mode,
-                reply_markup,
-                reply_to_message_id,
+            # Повторы при флуд-контроле/сети: одна попытка = до 5 реальных
+            # запросов с ожиданием retry_after от Telegram.
+            await telegram.call_with_retry(
+                lambda entities_attempt=entities_attempt, parse_mode=parse_mode: (
+                    _send_once(
+                        bot,
+                        chat_id,
+                        content,
+                        entities_attempt,
+                        parse_mode,
+                        reply_markup,
+                        reply_to_message_id,
+                    )
+                ),
+                context=f"отправка содержимого в {chat_id}",
             )
             if index:
                 logger.info(
-                    "Сообщение в %s ушло без форматирования (fallback №%s).", chat_id, index
+                    "Сообщение в %s ушло без форматирования (fallback №%s).",
+                    chat_id,
+                    index,
                 )
             return True
         except TelegramAPIError as exc:
-            logger.warning("Не удалось отправить содержимое в %s: %s", chat_id, exc)
+            # Все повторы исчерпаны либо ошибка неповторяемая (права,
+            # разметка) — логируем по-человечески и пробуем следующий вариант.
+            error_handler.log_telegram_error(
+                f"отправка содержимого в {chat_id} (вариант {index + 1})",
+                exc,
+                level=logging.WARNING,
+            )
+            if isinstance(exc, TelegramForbiddenError):
+                # Нет доступа в чат — повторные варианты тоже бесполезны.
+                logger.error(
+                    "Содержимое в %s не отправлено: бот не имеет доступа "
+                    "(кикнут или нет прав). Ошибка: %s",
+                    chat_id,
+                    exc,
+                )
+                return False
         except Exception:  # noqa: BLE001 - отправка не должна ронять бота
             logger.error("Неожиданная ошибка отправки в %s", chat_id, exc_info=True)
             return False
@@ -856,18 +880,23 @@ async def send_content(
         )
         text_only = RichContent(text=content.text, entities=content.entities, photo=None)
         try:
-            await _send_once(
-                bot,
-                chat_id,
-                text_only,
-                entities,
-                None,
-                reply_markup,
-                reply_to_message_id,
+            await telegram.call_with_retry(
+                lambda: _send_once(
+                    bot,
+                    chat_id,
+                    text_only,
+                    entities,
+                    None,
+                    reply_markup,
+                    reply_to_message_id,
+                ),
+                context=f"отправка текста без фото в {chat_id}",
             )
             return True
         except TelegramAPIError as exc:
-            logger.error("Текст без фото тоже не ушёл в %s: %s", chat_id, exc)
+            error_handler.log_telegram_error(
+                f"отправка текста без фото в {chat_id}", exc
+            )
         except Exception:  # noqa: BLE001
             logger.error("Неожиданная ошибка отправки текста в %s", chat_id, exc_info=True)
 

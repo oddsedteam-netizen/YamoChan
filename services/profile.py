@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Final, Iterable, Optional, Sequence
+from typing import Final, Optional, Sequence
 
 import config
 from database.models import (
@@ -160,10 +160,33 @@ def build_main_menu_text(guarded_count: int = 0) -> str:
     return "\n".join(lines)
 
 
+#: Что нового в текущей версии: ``версия → текст``. Пустой dict — показывать нечего.
+CHANGELOG: Final[dict[str, str]] = {
+    "1.1.0": (
+        "• Приветствие больше не теряется: вход ловится двумя каналами "
+        "(служебное сообщение и смена статуса участника), а повторы при отказе.\n"
+        "• Защита от двух ботов на одном токене — раньше они забирали "
+        "события друг у друга, и приветствия терялись.\n"
+        "• Новая команда .диагностика в чате: покажет права бота и причину, "
+        "почему приветствие не уходит.\n"
+        "• Служебные сообщения Telegram (заход/выход) удаляются пачками "
+        "и не сыпят ошибки при 429.\n"
+        "• Подробные логи: logs/yamochan.log и logs/yamochan_errors.log."
+    ),
+}
+
+
+def build_changelog_text() -> str:
+    """Блок «Что нового» для справки ``/help`` (пустая строка, если нечего писать)."""
+    notes = CHANGELOG.get(config.BOT_VERSION, "").strip()
+    return f"🆕 Что нового в {config.BOT_VERSION}:\n{notes}\n\n" if notes else ""
+
+
 def build_capabilities_text() -> str:
     """Текст кнопки «Возможности» (``/help`` и меню).
 
-    Внизу — подпись с названием и версией бота (:data:`config.BOT_VERSION`).
+    Внизу — блок «Что нового» и подпись с названием и версией бота
+    (:data:`config.BOT_VERSION`).
     """
     return (
         "⚡ Мои возможности~\n\n"
@@ -182,6 +205,8 @@ def build_capabilities_text() -> str:
         "• .правила — показать правила чата\n"
         "• .приветствие — предпросмотр приветствия (админам)\n"
         "• .калл — позвать всех (текст необязателен)\n\n"
+        "🩺 Помощь:\n"
+        f"• .{config.COMMAND_DIAGNOSTICS} — почему не работает бот в этом чате\n\n"
         "📊 Профили:\n"
         "• Автоматическое создание профилей\n"
         "• Отслеживание репутации\n"
@@ -191,6 +216,7 @@ def build_capabilities_text() -> str:
         "• Обнаружение забаненных юзеров\n"
         "• Автобан после 3 варнов\n\n"
         "⚙️ Настройки через ЛС для владельца чата\n\n"
+        f"{build_changelog_text()}"
         "━━━━━━━━━━━━━\n"
         f"{config.BOT_NAME} v{config.BOT_VERSION}"
     )
@@ -387,6 +413,114 @@ def build_user_info_text(
         lines.append("")
         lines.append("🚪 Сейчас участника нет в чате.")
     return "\n".join(lines)
+
+
+def build_diagnostics_title(chat_title: str) -> str:
+    """Заголовок отчёта диагностики.
+
+    :param chat_title: название чата (может быть пустым).
+    """
+    return f"🩺 Диагностика YamoChan v{config.BOT_VERSION} — {chat_title or 'чат без названия'}"
+
+
+def build_diagnostics_footer(hint: str) -> str:
+    """Подвал отчёта с главным выводом.
+
+    :param hint: главный вывод — что именно нужно исправить.
+    """
+    return f"\n\n━━━━━━━━━━━━━\n{hint}"
+
+
+def build_diagnostics_report(
+    *,
+    chat_title: str,
+    rights: dict[str, Optional[bool]],
+    greeting_enabled: bool,
+    greeting_has_text: bool,
+    greeting_has_photo: bool,
+    greeting_buttons: int,
+    test_sent: bool,
+    test_error: str = "",
+) -> str:
+    """Собрать текст отчёта диагностики для чата.
+
+    Показывает всё, из-за чего может не приходить приветствие: права бота,
+    состояние настройки и — главное — результат реальной тестовой отправки.
+
+    :param chat_title: название чата.
+    :param rights: права бота (``имя → право``), ``None`` — неизвестно.
+    :param greeting_enabled: включено ли приветствие в настройках.
+    :param greeting_has_text: есть ли текст приветствия.
+    :param greeting_has_photo: есть ли фото приветствия.
+    :param greeting_buttons: сколько кнопок сохранено.
+    :param test_sent: ушло ли тестовое сообщение.
+    :param test_error: текст ошибки отправки (если была).
+    :returns: готовый текст отчёта.
+    """
+
+    def flag(value: Optional[bool]) -> str:
+        """Значок права по его значению."""
+        if value is None:
+            return "❔ неизвестно"
+        return "✅" if value else "❌ нет"
+
+    lines = [
+        build_diagnostics_title(chat_title),
+        "",
+        "👤 Права бота в чате:",
+        f"• Администратор: {flag(rights.get('admin'))}",
+        f"• Удалять сообщения: {flag(rights.get('delete'))}",
+        f"• Ограничивать участников: {flag(rights.get('restrict'))}",
+        f"• Читать сообщения: {flag(rights.get('read'))}",
+        "",
+        "💌 Приветствие новичкам:",
+        f"• Включено: {'да' if greeting_enabled else 'НЕТ'}",
+        f"• Текст: {'есть' if greeting_has_text else 'ПУСТОЙ'}",
+        f"• Фото: {'есть' if greeting_has_photo else 'нет'}",
+        f"• Кнопок: {greeting_buttons}",
+        "",
+        "📤 Проверка отправки сообщения в чат:",
+    ]
+
+    if test_sent:
+        lines.append("• Тестовое сообщение УШЛО — права на отправку есть.")
+        hint = (
+            "Отправка работает. Если приветствие не приходит — вероятно, участник "
+            "вошёл в момент, когда бота ещё не было в чате: Telegram не присылает "
+            "событие о прошедшем входе. Добавь нового участника и проверь снова."
+        )
+    else:
+        lines.append(f"• Тестовое сообщение НЕ УШЛО: {test_error or 'причина неизвестна'}")
+        hint = (
+            "Бот не может писать в чат. Выдай боту права администратора "
+            "с правом «Удалять сообщения» и «Исключать пользователей», "
+            "затем повтори диагностику."
+        )
+
+    lines.append(build_diagnostics_footer(hint))
+    return "\n".join(lines)
+
+
+def build_diagnostics_not_admin_text() -> str:
+    """Ответ на команду диагностики от не-администратора."""
+    return "Диагностику может запустить только администратор чата~ 🔒"
+
+
+def build_diagnostics_failed_text(error: str) -> str:
+    """Ответ, когда сам отчёт не удалось отправить.
+
+    :param error: текст ошибки отправки.
+    """
+    return f"🩺 Не смогла отправить отчёт диагностики: {error}"
+
+
+def build_diagnostics_command_help_text() -> str:
+    """Подсказка по команде диагностики."""
+    return (
+        f"Команда .{config.COMMAND_DIAGNOSTICS} показывает боту и администратору "
+        "всё, что нужно для работы приветствия: права бота в чате, состояние "
+        "настройки и результат реальной тестовой отправки."
+    )
 
 
 def build_welcome_new_text(name: str) -> str:

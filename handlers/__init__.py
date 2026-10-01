@@ -11,7 +11,10 @@
     * :mod:`yamochan.handlers.start` — личные сообщения (/start, профиль);
     * :mod:`yamochan.handlers.moderation` — команды модератора с гибким
       префиксом (``.``, ``/``, ``!`` или без него);
-    * :mod:`yamochan.handlers.events` — вход/выход участников, антирейд, антиспам;
+    * :mod:`yamochan.handlers.diagnostics` — команда ``.диагностика``:
+      права бота в чате и проверка отправки;
+    * :mod:`yamochan.handlers.events` — пакет событий чата (вход/выход
+      участников, антирейд, антиспам, служебные сообщения);
     * :mod:`yamochan.handlers.rules` — правила чата, приветствие новичков,
       инлайн-кнопки приветствия и превентивные муты помеченным;
     * :mod:`yamochan.handlers.faq` — гайд FAQ по разделам бота;
@@ -26,6 +29,7 @@ __all__ = [
     "call",
     "callbacks",
     "complaints",
+    "diagnostics",
     "events",
     "faq",
     "moderation",

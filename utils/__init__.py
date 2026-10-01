@@ -5,6 +5,11 @@
     * :mod:`yamochan.utils.telegram` — безопасные помощники Telegram API;
     * :mod:`yamochan.utils.command_filter` — гибкое распознавание команд
       (``.``, ``/``, ``!`` или без префикса);
+    * :mod:`yamochan.utils.dedup` — защита от повторной обработки одного
+      события, пришедшего двумя каналами Telegram;
+    * :mod:`yamochan.utils.lock` — защита от запуска двух ботов с одним
+      токеном (иначе Telegram отдаёт события только одному, а остальные
+      теряются);
     * :mod:`yamochan.utils.html_utils` — экранирование текста и лечение
       HTML-разметки (``<`` в данных больше не ломает экраны);
     * :mod:`yamochan.utils.faq_texts` — тексты гайда FAQ.
@@ -12,4 +17,12 @@
 
 from __future__ import annotations
 
-__all__ = ["command_filter", "error_handler", "faq_texts", "html_utils", "telegram"]
+__all__ = [
+    "command_filter",
+    "dedup",
+    "error_handler",
+    "faq_texts",
+    "html_utils",
+    "lock",
+    "telegram",
+]

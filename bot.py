@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable, Final, Optional
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType, ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
@@ -35,6 +36,7 @@ from handlers import (
     call,
     callbacks,
     complaints,
+    diagnostics,
     events,
     faq,
     moderation,
@@ -43,8 +45,10 @@ from handlers import (
     start,
 )
 from services import call as call_service
+from services import join_queue as join_queue_service
 from services import punishment
-from utils import error_handler
+from services import service_cleanup as service_cleanup_service
+from utils import error_handler, lock
 
 logger = logging.getLogger(__name__)
 
@@ -180,9 +184,11 @@ def build_dispatcher(db: Database) -> Dispatcher:
     # Порядок важен: первым идёт роутер жалоб — он владеет кнопками
     # ``adm:complaint:…``; сразу за ним — админ-панель владельца: команда /adm
     # должна ловиться раньше общих роутеров, иначе её перехватит модерация или
-    # личка, и панель «не откроется». Дальше: антирейд (со своими состояниями)
-    # → ролевые команды → Call → правила/приветствие → личка (/start) →
-    # модерация → события чата → FAQ → кнопки.
+    # личка, и панель «не откроется». Диагностика обязана идти ДО модерации:
+    # ``.диагностика`` иначе съест фильтр «неизвестная команда». Дальше:
+    # антирейд (со своими состояниями) → ролевые команды → Call →
+    # правила/приветствие → личка (/start) → модерация → события чата → FAQ →
+    # кнопки.
     dispatcher.include_router(complaints.router)
     dispatcher.include_router(admin_panel.router)
     dispatcher.include_router(antiraid.router)
@@ -190,6 +196,7 @@ def build_dispatcher(db: Database) -> Dispatcher:
     dispatcher.include_router(call.router)
     dispatcher.include_router(rules.router)
     dispatcher.include_router(start.router)
+    dispatcher.include_router(diagnostics.router)
     dispatcher.include_router(moderation.router)
     dispatcher.include_router(events.router)
     dispatcher.include_router(faq.router)
@@ -285,6 +292,9 @@ async def run_polling(dp: Dispatcher, bot: Bot, stop_event: asyncio.Event) -> No
                 bot,
                 allowed_updates=allowed_updates,
                 handle_signals=False,
+                # Лимит одновременных апдейтов: без него наплыв входов
+                # создаёт сотни параллельных задач и ловит флуд-контрол.
+                tasks_concurrency_limit=config.UPDATE_CONCURRENCY_LIMIT,
             )
             break
         except asyncio.CancelledError:
@@ -304,7 +314,20 @@ async def main() -> int:
     :returns: код возврата процесса — ``0`` при штатном завершении.
     """
     error_handler.setup_logging()
+    error_handler.install_loop_exception_handler(asyncio.get_running_loop())
     logger.info(f"🚀 {config.BOT_NAME} v{config.BOT_VERSION} запущена~")
+
+    # Диагностика окружения: с неправильным .env бот «не работает» без
+    # единой ошибки — поэтому пишем в лог, откуда взяты настройки.
+    env_loaded = [
+        str(path) for path in (config.ENV_FILE, config.LOCAL_ENV_FILE) if path.exists()
+    ]
+    logger.info(
+        "Конфиг: %s | DB: %s | LOG_LEVEL: %s",
+        ", ".join(env_loaded) or "нет файлов .env (токен из окружения)",
+        config.DB_PATH,
+        config.LOG_LEVEL,
+    )
 
     # Диагностика админ-панели: с пустым BOT_OWNER_ID команда /adm молчит,
     # и внешне это выглядит как «панель не работает».
@@ -313,14 +336,25 @@ async def main() -> int:
     else:
         logger.warning(
             "⚠️ BOT_OWNER_ID не задан — админ-панель (/adm) работать не будет. "
-            "Добавь строку BOT_OWNER_ID=<твой Telegram ID> в файл .env"
+            "Добавь строку BOT_OWNER_ID=<твой Telegram ID> в файл .env.local"
         )
 
     if not config.BOT_TOKEN:
         logger.error(
-            "Не задан BOT_TOKEN! Скопируй .env.example в .env и вставь токен от @BotFather."
+            "Не задан BOT_TOKEN! Создай .env.local (см. .env.local.example) "
+            "и вставь токен от @BotFather."
         )
         return 1
+
+    # Файловый лок: два бота с одним токеном дерутся за getUpdates, Telegram
+    # отдаёт события только одному, и приветствия теряются. Лучше честно
+    # отказаться стартовать, чем работать «через раз».
+    instance_lock = lock.InstanceLock(config.DB_PATH.parent / lock.LOCK_FILENAME)
+    try:
+        instance_lock.acquire()
+    except lock.AlreadyRunningError as exc:
+        logger.error("⛔ %s", exc)
+        return 2
 
     db = Database(config.DB_PATH)
     bot: Optional[Bot] = None
@@ -332,9 +366,15 @@ async def main() -> int:
         await db.connect()
         await db.init_schema()
 
-        # 2. Бот и диспетчер.
+        # 2. Бот и диспетчер. Сессия с явным таймаутом: при наплыве запросы
+        #    не должны висеть минутами без ответа.
+        session = AiohttpSession(
+            timeout=config.TELEGRAM_REQUEST_TIMEOUT,
+            limit=config.TELEGRAM_SESSION_LIMIT,
+        )
         bot = Bot(
             token=config.BOT_TOKEN,
+            session=session,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         dp = build_dispatcher(db)
@@ -353,9 +393,11 @@ async def main() -> int:
         # Восстанавливаем отложенные вызовы, сохранённые в настройках чатов.
         await call_service.restore_scheduled(bot, db)
 
-        # 3. Фоновые задачи.
+        # 3. Фоновые задачи: воркер наказаний, воркер удаления служебных
+        #    сообщений, стоп-вотчер поллинга.
         tasks.append(asyncio.create_task(expiration_worker(db, bot, stop_event)))
         tasks.append(asyncio.create_task(watchdog(dp, stop_event)))
+        service_cleanup_service.service_cleanup.start(bot, stop_event)
 
         # 4. Поллинг с автоперезапуском.
         await run_polling(dp, bot, stop_event)
@@ -368,6 +410,23 @@ async def main() -> int:
         return 1
     finally:
         stop_event.set()
+        # Дожидаемся хвостов: входы и служебные удаления должны долиться,
+        # пока сессия бота ещё открыта.
+        try:
+            await join_queue_service.join_queue.drain(timeout=5.0)
+            await service_cleanup_service.service_cleanup.drain(bot, timeout=3.0)
+        except Exception:  # noqa: BLE001 - остановка не должна ломаться
+            logger.error("Не удалось дождаться фоновых очередей", exc_info=True)
+        service_cleanup_service.service_cleanup.stop()
+        join_queue_service.join_queue.stop()
+        logger.info(
+            "Итоги фоновых задач: очередь входов (в очереди %s, обработано %s, "
+            "отклонено %s); служебные удаления %s.",
+            join_queue_service.join_queue.pending,
+            join_queue_service.join_queue.processed,
+            join_queue_service.join_queue.rejected,
+            service_cleanup_service.service_cleanup.stats(),
+        )
         for task in tasks:
             task.cancel()
         if tasks:
@@ -381,6 +440,7 @@ async def main() -> int:
             await db.close()
         except Exception:  # noqa: BLE001
             logger.error("Не удалось корректно закрыть базу данных", exc_info=True)
+        instance_lock.release()
         logger.info("YamoChan выключена~ 💤")
 
 

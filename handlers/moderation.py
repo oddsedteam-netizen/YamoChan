@@ -49,7 +49,8 @@ UNKNOWN_COMMAND_PREFIXES: Final[tuple[str, ...]] = command_filter.COMMAND_PREFIX
 #: Команды, которые в группе обрабатывает кто-то другой: на них нельзя
 #: отвечать «не знаю», иначе до своего хендлера они не дойдут.
 KNOWN_GROUP_COMMANDS: Final[frozenset[str]] = frozenset(
-    set(config.MODERATION_COMMANDS) | {config.COMMAND_SYNC}
+    set(config.MODERATION_COMMANDS)
+    | {config.COMMAND_SYNC, config.COMMAND_DIAGNOSTICS}
 )
 
 

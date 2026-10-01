@@ -23,9 +23,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BASE_DIR: Final[Path] = Path(__file__).resolve().parent
 ENV_FILE: Final[Path] = BASE_DIR / ".env"
+#: Локальный конфиг (перекрывает ``.env``) — для запусков на своём компьютере.
+LOCAL_ENV_FILE: Final[Path] = BASE_DIR / ".env.local"
 
-# Читаем .env один раз при импорте модуля.
+# Читаем .env один раз при импорте модуля: сначала базовый файл, затем
+# локальный (если есть) с override — локальные значения выигрывают.
 load_dotenv(dotenv_path=ENV_FILE)
+load_dotenv(dotenv_path=LOCAL_ENV_FILE, override=True)
 
 # ---------------------------------------------------------------------------
 # Основные настройки бота
@@ -33,7 +37,7 @@ load_dotenv(dotenv_path=ENV_FILE)
 BOT_TOKEN: Final[str] = os.getenv("BOT_TOKEN", "").strip()
 BOT_NAME: Final[str] = "YamoChan"
 #: Версия бота — показывается в логах, приветствии ``/start`` и справке.
-BOT_VERSION: Final[str] = "1.0.0"
+BOT_VERSION: Final[str] = "1.1.0"
 
 #: Путь к файлу базы данных SQLite (в зарезервированной папке data/).
 DB_PATH: Final[Path] = Path(
@@ -47,8 +51,16 @@ UTC: Final[timezone] = timezone.utc
 # Логирование
 # ---------------------------------------------------------------------------
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FORMAT: Final[str] = "[%(asctime)s] %(levelname)s: %(message)s"
+LOG_FORMAT: Final[str] = "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
 LOG_DATE_FORMAT: Final[str] = "%Y-%m-%d %H:%M:%S"
+#: Папка для файлов логов (создаётся при старте).
+LOG_DIR: Final[Path] = Path(os.getenv("LOG_DIR", str(BASE_DIR / "logs"))).expanduser()
+#: Основной файл лога и файл только с ошибками.
+LOG_FILE: Final[Path] = LOG_DIR / "yamochan.log"
+ERROR_LOG_FILE: Final[Path] = LOG_DIR / "yamochan_errors.log"
+#: Ротация основного файла лога.
+LOG_FILE_MAX_BYTES: Final[int] = 10 * 1024 * 1024
+LOG_FILE_BACKUPS: Final[int] = 5
 
 # ---------------------------------------------------------------------------
 # Супер-админы бота (опционально): им разрешены команды модерации
@@ -78,12 +90,13 @@ def _env_int(name: str, default: int = 0) -> int:
 BOT_OWNER_ID: Final[int] = _env_int("BOT_OWNER_ID", 0)
 
 if BOT_OWNER_ID <= 0:
-    # Сообщаем сразу при импорте: забытая строка в .env — самая частая причина
-    # «/admin не работает», а по логам это иначе не видно.
+    # Сообщаем сразу при импорте: забытая строка в конфиге — самая частая
+    # причина «/adm не работает», а по логам это иначе не видно. Путь указываем
+    # тот, что реально загружен (локальный .env.local перекрывает .env).
     logger.warning(
         "BOT_OWNER_ID не задан в %s — админ-панель (/adm) не будет отвечать. "
         "Добавь строку BOT_OWNER_ID=<твой Telegram ID> и перезапусти бота.",
-        ENV_FILE,
+        LOCAL_ENV_FILE if LOCAL_ENV_FILE.exists() else ENV_FILE,
     )
 
 #: Имена команды входа в админ-панель (префикс не важен: ``.adm``, ``/adm``, ``adm``).
@@ -207,6 +220,8 @@ COMMAND_INFO: Final[str] = "инфо"
 COMMAND_OPEN: Final[str] = "открыть"
 #: Служебная команда: сбросить кэш админов и пересинхронизировать владельца.
 COMMAND_SYNC: Final[str] = "синк"
+#: Служебная команда: диагностика прав бота и приветствия прямо в чате.
+COMMAND_DIAGNOSTICS: Final[str] = "диагностика"
 
 #: Полный список команд модерации (используется в настройках чата).
 MODERATION_COMMANDS: Final[tuple[str, ...]] = (
@@ -289,6 +304,37 @@ MESSAGE_LOG_TTL_HOURS: Final[int] = 48
 EXPIRATION_CHECK_INTERVAL: Final[int] = 30
 #: Пауза перед перезапуском long-polling после ошибки (секунды).
 POLLING_RESTART_DELAY: Final[int] = 5
+#: Сколько апдейтов одновременно может обрабатываться (защита от наплыва).
+UPDATE_CONCURRENCY_LIMIT: Final[int] = 32
+#: Таймаут HTTP-запроса к Telegram API (секунды).
+TELEGRAM_REQUEST_TIMEOUT: Final[float] = 45.0
+#: Максимум одновременных HTTP-соединений сессии бота.
+TELEGRAM_SESSION_LIMIT: Final[int] = 100
+#: Сколько раз повторять Telegram-вызов при флуд-контроле/сети.
+TELEGRAM_RETRY_ATTEMPTS: Final[int] = 5
+#: Базовая пауза между повторами (секунды, растёт экспоненциально).
+TELEGRAM_RETRY_BASE_DELAY: Final[float] = 1.0
+#: Максимальная пауза между повторами (секунды).
+TELEGRAM_RETRY_MAX_DELAY: Final[float] = 30.0
+#: Пауза между обработкой двух входов в одном чате (мс) — не ловим 429.
+JOIN_MIN_INTERVAL_MS: Final[int] = 1200
+#: Максимум отложенных входов в очереди на чат (защита памяти).
+JOIN_QUEUE_MAX_PER_CHAT: Final[int] = 200
+#: Максимум отложенных входов во всех очередях суммарно.
+JOIN_QUEUE_MAX_TOTAL: Final[int] = 1000
+#: Служебные сообщения: размер батча ``deleteMessages`` (лимит Telegram).
+SERVICE_DELETE_BATCH: Final[int] = 100
+#: Максимум сообщений в очереди удаления служебных уведомлений.
+SERVICE_CLEANUP_QUEUE_MAX: Final[int] = 500
+#: Пауза между батчами удаления (секунды) — размазываем флуд-контроль.
+SERVICE_CLEANUP_BATCH_DELAY: Final[float] = 0.5
+#: Как часто воркер проверяет очередь удаления (секунды).
+SERVICE_CLEANUP_INTERVAL: Final[float] = 0.5
+#: Окно защиты от дублей входа (секунды): Telegram шлёт вход и служебным
+#: сообщением, и обновлением статуса — обработать надо ровно один раз.
+JOIN_DEDUP_TTL: Final[float] = 60.0
+#: Паузы перед повторной отправкой приветствия, если первая не удалась.
+GREETING_RETRY_DELAYS: Final[tuple[float, ...]] = (3.0, 8.0)
 #: Сколько последних чатов показывать в «Мои чаты».
 MAX_CHATS_IN_LIST: Final[int] = 12
 #: Сколько чатов с варнами показывать в карточке профиля.

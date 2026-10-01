@@ -879,6 +879,23 @@ async def send_custom_greeting(
     :returns: ``True``, если сообщение ушло.
     """
     if not enabled(settings, "greeting"):
+        # Логируем причину: раньше молчание здесь выглядело как «бот
+        # перестал присылать приветствие» без единой строки в логах.
+        if not setting_flag(
+            settings,
+            ENABLED_KEYS.get("greeting", ""),
+            ENABLED_ALIASES.get("greeting", ""),
+        ):
+            logger.info(
+                "Приветствие в чате %s выключено в настройках — не отправляю.",
+                chat_id,
+            )
+        else:
+            logger.warning(
+                "Приветствие в чате %s включено, но пустое (нет текста и фото) "
+                "— настрой его в меню чата.",
+                chat_id,
+            )
         return False
     title, count = await chat_placeholders(bot, db, chat_id)
     values = richtext.placeholder_values(member, chat_title=title, member_count=count)
@@ -886,13 +903,21 @@ async def send_custom_greeting(
         content(settings, "greeting"), values, user=member
     )
     markup = inline.saved_buttons_keyboard(settings.get(GREETING_BUTTONS_KEY))
-    return await richtext.send_content(
+    sent = await richtext.send_content(
         bot,
         chat_id,
         personal,
         reply_markup=markup,
         html_fallback=False,
     )
+    if not sent:
+        logger.error(
+            "Приветствие для участника %s в чат %s не отправилось "
+            "(send_content вернул False) — подробности в logs/yamochan_errors.log.",
+            getattr(member, "id", "?"),
+            chat_id,
+        )
+    return sent
 
 
 # ---------------------------------------------------------------------------
@@ -1100,9 +1125,9 @@ async def _save_input(
             )
             return
 
-        settings = await _save_content(db, chat_id, kind, content_value)
+        await _save_content(db, chat_id, kind, content_value)
         # Сохранили содержимое — сразу включаем блок, чтобы не жать тумблер.
-        settings = await queries.update_chat_setting(db, chat_id, ENABLED_KEYS[kind], True)
+        await queries.update_chat_setting(db, chat_id, ENABLED_KEYS[kind], True)
         if kind == "greeting":
             # Шаг 2/2: предложить добавить инлайн-кнопки.
             await state.set_state(ContentStates.waiting_greeting_buttons)
