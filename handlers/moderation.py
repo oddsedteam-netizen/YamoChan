@@ -37,17 +37,12 @@ from utils import command_filter, error_handler, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер команд модерации.
 router: Final[Router] = Router(name="moderation")
 
-#: Групповые типы чатов.
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
-#: Префиксы, по которым подсказываем про неизвестную команду (``.``, ``/``, ``!``).
 UNKNOWN_COMMAND_PREFIXES: Final[tuple[str, ...]] = command_filter.COMMAND_PREFIXES
 
-#: Команды, которые в группе обрабатывает кто-то другой: на них нельзя
-#: отвечать «не знаю», иначе до своего хендлера они не дойдут.
 KNOWN_GROUP_COMMANDS: Final[frozenset[str]] = frozenset(
     set(config.MODERATION_COMMANDS)
     | {config.COMMAND_SYNC, config.COMMAND_DIAGNOSTICS}
@@ -140,7 +135,7 @@ async def _stored_name(db: Database, user_id: int, fallback: str) -> str:
         stored = await queries.get_user(db, user_id)
         if stored is not None and stored.first_name:
             return stored.first_name
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("получении имени пользователя", exc)
     return fallback
 
@@ -203,7 +198,6 @@ async def resolve_target(
             username = member.user.username
         return CommandTarget(user_id, name, username), remaining, None
 
-    # Первый аргумент — не цель: значит цель не указана.
     return None, list(args), config.NO_TARGET_MESSAGE
 
 
@@ -285,7 +279,6 @@ async def _dispatch(
     if target is None:
         return error or config.NO_TARGET_MESSAGE
 
-    # Владельца чата, админов и себя наказывать нельзя.
     if await permissions.is_protected_target(bot, db, chat_id, target.user_id):
         return config.PROTECTED_TARGET_MESSAGE
 
@@ -339,7 +332,6 @@ async def _dispatch(
     elif name == config.COMMAND_UNWARN:
         result = await punishment.unwarn_user(db, chat_id, target.user_id, target.name)
     else:
-        # Осталась только команда «.кик».
         result = await punishment.kick_user(
             bot,
             db,
@@ -368,9 +360,6 @@ async def handle_moderation_command(
     """
     chat_id = message.chat.id
     try:
-        # 1. Права и настройки: модер-команды доступны только админам чата
-        #    (включая анонимных). Обычным участникам бот не отвечает вовсе —
-        #    пустая причина отказа означает молчание.
         rights = await permissions.check_moderation_rights(bot, message)
         settings = await queries.get_chat_settings(db, chat_id)
         actor_id = message.from_user.id if message.from_user else 0
@@ -386,8 +375,6 @@ async def handle_moderation_command(
         )
         if not allowed:
             if denial:
-                # Команда выключена для админов: владелец ей пользоваться
-                # всё равно может, остальным объясняем причину отказа.
                 await message.reply(denial)
             else:
                 logger.info(
@@ -398,10 +385,6 @@ async def handle_moderation_command(
                 )
             return
 
-        # 2. Учитываем чат, владельца и активность автора.
-        # Числа участников в апдейте сообщения нет (в aiogram 3.x поля
-        # members_count у Chat нет) — счётчик обновляется при входах/выходах
-        # участников и при добавлении бота.
         await queries.ensure_chat(
             db,
             chat_id,
@@ -419,11 +402,8 @@ async def handle_moderation_command(
         if chat_info is None or chat_info.owner_id is None:
             await permissions.sync_chat_owner(bot, db, chat_id)
         elif await queries.get_chat_user(db, chat_id, chat_info.owner_id) is None:
-            # Владелец известен, но связи с chat_users нет — создаём её,
-            # чтобы чат появился у него в «Моих чатах».
             await queries.link_chat_owner(db, chat_id, chat_info.owner_id)
 
-        # 3. Без прав админа бот не сможет наказать.
         if not await permissions.is_bot_administrator(bot, chat_id):
             await message.reply(
                 "Мне не хватает прав администратора~ 🙏\n"
@@ -431,11 +411,10 @@ async def handle_moderation_command(
             )
             return
 
-        # 4. Выполняем команду и отвечаем от лица YamoChan.
         reply_text = await _dispatch(bot, db, message, command, rights)
         if reply_text:
             await message.reply(reply_text)
-    except Exception as exc:  # noqa: BLE001 - бот не должен падать
+    except Exception as exc:
         error_handler.log_exception(f"команде «.{command.name}»", exc)
         await error_handler.notify_user_softly(message)
 
@@ -456,7 +435,7 @@ async def unknown_command(message: Message, bot: Bot) -> None:
             f"Команды «.{parsed.name}» я не знаю~ 🤔\n"
             "Посмотри список в /start у меня в личке!"
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("подсказке о неизвестной команде", exc)
 
 
@@ -522,13 +501,12 @@ async def cmd_sync(message: Message, db: Database, bot: Bot) -> None:
             "определён" if owner_id else "не определён",
         )
 
-        # Никаких имён и ID админов в публичном ответе — только факты.
         await message.reply(
             "✅ <b>Синхронизация готова!</b>\n\n"
             f"👑 Админов в чате: {len(admin_ids)}\n"
             f"🪪 Владелец: {'определён ✅' if owner_id else 'не определён ❌'}\n\n"
             "🕶 Я не отмечаю владельца, админов, автора вызова и себя~"
         )
-    except Exception as exc:  # noqa: BLE001 - команда не должна ронять бота
+    except Exception as exc:
         error_handler.log_exception("команде синхронизации", exc)
         await error_handler.notify_user_softly(message)

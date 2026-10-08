@@ -27,9 +27,6 @@ class DatabaseError(RuntimeError):
     """Исключение слоя базы данных после исчерпания всех попыток."""
 
 
-# ---------------------------------------------------------------------------
-# Схема базы данных
-# ---------------------------------------------------------------------------
 SCHEMA_SQL: str = """
 CREATE TABLE IF NOT EXISTS users (
     user_id             INTEGER PRIMARY KEY,
@@ -142,15 +139,11 @@ CREATE INDEX IF NOT EXISTS idx_complaints_user      ON complaints (user_id, stat
 CREATE INDEX IF NOT EXISTS idx_admin_log_created    ON admin_log (created_at);
 """
 
-#: Миграции для баз, созданных прошлыми версиями бота:
-#: ``(таблица, колонка, определение)``. Применяются, если колонки ещё нет.
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     ("users", "is_spammer", "INTEGER NOT NULL DEFAULT 0"),
     ("chat_users", "is_raid_suspect", "INTEGER NOT NULL DEFAULT 0"),
 )
 
-#: Ключи настроек чата, оставшиеся от удалённых режимов (PR).
-#: Отдельной таблицы под них не создавалось — чистим json-поле ``chats.settings``.
 LEGACY_SETTINGS_KEYS: tuple[str, ...] = (
     "pr_enabled",
     "pr_resources",
@@ -186,9 +179,6 @@ class Database:
         self._connection: Optional[aiosqlite.Connection] = None
         self._lock: asyncio.Lock = asyncio.Lock()
 
-    # ------------------------------------------------------------------
-    # Свойства
-    # ------------------------------------------------------------------
     @property
     def path(self) -> Path:
         """Путь к файлу базы данных."""
@@ -199,9 +189,6 @@ class Database:
         """Открыто ли соединение с базой."""
         return self._connection is not None
 
-    # ------------------------------------------------------------------
-    # Жизненный цикл
-    # ------------------------------------------------------------------
     async def connect(self) -> None:
         """Открыть соединение, включить WAL и подготовить прагмы."""
         async with self._lock:
@@ -215,7 +202,6 @@ class Database:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         connection = await aiosqlite.connect(str(self._path), timeout=self._timeout)
         connection.row_factory = aiosqlite.Row
-        # Прагмы: WAL для параллельного чтения, busy_timeout против «database is locked».
         await connection.execute("PRAGMA journal_mode=WAL")
         await connection.execute("PRAGMA synchronous=NORMAL")
         await connection.execute("PRAGMA foreign_keys=ON")
@@ -321,9 +307,6 @@ class Database:
         rows = await self.fetch_all(f"PRAGMA table_info({table})")
         return {str(row["name"]) for row in rows}
 
-    # ------------------------------------------------------------------
-    # Низкоуровневые операции с retry
-    # ------------------------------------------------------------------
     async def _run_with_retry(self, operation: str, action: Any, *args: Any) -> Any:
         """Выполнить действие с повторами при ошибках БД.
 
@@ -365,9 +348,6 @@ class Database:
         except (sqlite3.Error, OSError):
             logger.debug("Соединение с БД закрыто после ошибки.", exc_info=True)
 
-    # ------------------------------------------------------------------
-    # Запросы
-    # ------------------------------------------------------------------
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
         """Выполнить запрос без возврата строк (INSERT/UPDATE/DELETE)."""
 
@@ -435,4 +415,3 @@ class Database:
             await connection.commit()
 
         await self._run_with_retry("executescript", action)
-

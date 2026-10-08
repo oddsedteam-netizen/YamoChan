@@ -50,20 +50,22 @@ from database.db import Database
 from database.models import ChatUser, Punishment, UserProfile, utcnow
 from services import admin as admin_service
 from services import antiraid as antiraid_service
+from services import join_queue as join_queue_service
+from services import service_cleanup as service_cleanup_service
 from services import permissions, profile as profile_service, punishment
 from utils import command_filter, error_handler, telegram
+from utils.dedup import EventDedup
 from handlers import antiraid as antiraid_ui
 from handlers import rules as rules_ui
 
 logger = logging.getLogger(__name__)
 
-#: Роутер событий чата.
 router: Final[Router] = Router(name="events")
 
-#: Групповые типы чатов.
+join_dedup: Final[EventDedup] = EventDedup(config.JOIN_DEDUP_TTL)
+
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
-#: Статусы, при которых бот считается присутствующим в чате.
 BOT_PRESENT_STATUSES: Final[set[str]] = {
     ChatMemberStatus.MEMBER,
     ChatMemberStatus.ADMINISTRATOR,
@@ -71,14 +73,12 @@ BOT_PRESENT_STATUSES: Final[set[str]] = {
     ChatMemberStatus.RESTRICTED,
 }
 
-#: Приветствие чата после добавления бота.
 BOT_ADDED_GREETING: Final[str] = (
     "✨ Спасибо, что добавили меня! Я YamoChan — ваш модератор~ 💕\n"
     "Выдайте мне права администратора, и я наведу порядок 🌸\n\n"
     "Команды: .бан .разбан .мут .размут .варн .снятьварн .кик .инфо"
 )
 
-#: Поля сообщения, по которым оно считается служебным (не активностью юзера).
 SERVICE_MESSAGE_FIELDS: Final[tuple[str, ...]] = (
     "new_chat_members",
     "left_chat_member",
@@ -110,10 +110,6 @@ def is_service_message(message: Message) -> bool:
     return any(getattr(message, field, None) for field in SERVICE_MESSAGE_FIELDS)
 
 
-#: Служебные сообщения, которые бот умеет скрывать.
-#:
-#: Миграция группы в супергруппу сюда не входит: её системное сообщение
-#: Telegram использует для перехода в новый чат, удалять его нельзя.
 DELETABLE_SERVICE_MESSAGE_FIELDS: Final[tuple[str, ...]] = (
     "new_chat_title",
     "new_chat_photo",
@@ -162,15 +158,7 @@ async def delete_service_message(
     """
     if not bool(settings.get(config.DELETE_SERVICE_MESSAGES_KEY, True)):
         return False
-    try:
-        await message.delete()
-    except Exception as exc:  # noqa: BLE001 - прав на удаление может не быть
-        logger.debug(
-            "Не удалось удалить служебное сообщение в чате %s: %s",
-            message.chat.id,
-            exc,
-        )
-        return False
+    service_cleanup_service.service_cleanup.add(message.chat.id, message.message_id)
     return True
 
 
@@ -195,7 +183,7 @@ class MessageCounterMiddleware(BaseMiddleware):
             if isinstance(event, Message) and not is_service_message(event):
                 await self._count_message(event)
                 await self._check_spam(event, data.get("bot"))
-        except Exception as exc:  # noqa: BLE001 - счётчики не важнее апдейта
+        except Exception as exc:
             error_handler.log_exception("подсчёте сообщения", exc)
         return await handler(event, data)
 
@@ -211,13 +199,9 @@ class MessageCounterMiddleware(BaseMiddleware):
         if author is None or author.is_bot:
             return
         text = message.text or message.caption or ""
-        # Команды (в том числе без префикса) — не активность пользователя.
         if command_filter.is_command_message(text):
             return
 
-        # Число участников в апдейте сообщения не приходит (в aiogram 3.x поля
-        # members_count у Chat нет), а лишний запрос на каждое сообщение не нужен:
-        # счётчик подтягивается при входе участника и добавлении бота.
         await queries.ensure_chat(
             self._db,
             chat.id,
@@ -230,9 +214,6 @@ class MessageCounterMiddleware(BaseMiddleware):
         await queries.increment_messages(self._db, chat.id, author.id)
         await queries.log_message(self._db, chat.id, author.id)
 
-    # ------------------------------------------------------------------
-    # Антиспам
-    # ------------------------------------------------------------------
     async def _check_spam(self, message: Message, bot: Optional[Bot]) -> None:
         """Проверить сообщение на спам и наказать нарушителя.
 
@@ -248,11 +229,9 @@ class MessageCounterMiddleware(BaseMiddleware):
         if author is None or author.is_bot:
             return
         text = message.text or message.caption or ""
-        # Команды (в том числе без префикса) — не спам.
         if command_filter.is_command_message(text):
             return
 
-        # Идентификаторы сообщений нужны, чтобы потом их удалить.
         antiraid_service.antiraid_manager.remember_message(
             chat.id, author.id, message.message_id
         )
@@ -263,7 +242,6 @@ class MessageCounterMiddleware(BaseMiddleware):
         ):
             return
 
-        # Порог сработал — только теперь спрашиваем Telegram о правах автора.
         if await self._is_privileged(bot, chat.id, author.id):
             antiraid_service.antiraid_manager.forget_messages(chat.id, author.id)
             return
@@ -275,7 +253,7 @@ class MessageCounterMiddleware(BaseMiddleware):
             return True
         try:
             chat = await queries.get_chat(self._db, chat_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             chat = None
         if chat is not None and chat.owner_id == user_id:
             return True
@@ -325,7 +303,7 @@ class MessageCounterMiddleware(BaseMiddleware):
                 chat_id=chat_id,
                 text=profile_service.build_spam_text(name, author.id, chat_closed),
             )
-        except Exception as exc:  # noqa: BLE001 - чат мог быть закрыт для бота
+        except Exception as exc:
             logger.info("Не удалось сообщить о спамере в чате %s: %s", chat_id, exc)
 
 
@@ -342,7 +320,7 @@ async def _knows_user(db: Database, user_id: int) -> bool:
     """
     try:
         return await queries.get_user(db, user_id) is not None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("проверке профиля пользователя", exc)
         return False
 
@@ -412,13 +390,11 @@ async def collect_join_summary(
     name = _user_name(member)
     summary = JoinSummary()
 
-    # 1. Состояние читаем ДО записей: иначе новичка не отличить от старожила.
     summary.is_new_globally = not await _knows_user(db, member.id)
     chat_user = await queries.get_chat_user(db, chat_id, member.id)
     summary.is_new_in_chat = chat_user is None or _never_active(chat_user)
     summary.chat_user = chat_user
 
-    # 2. Создаём/обновляем профиль, чат и связку «чат — пользователь».
     profile = await queries.ensure_user(
         db, member.id, member.username, member.first_name
     )
@@ -426,7 +402,6 @@ async def collect_join_summary(
     await queries.mark_joined(db, chat_id, member.id)
     summary.profile = profile
 
-    # 3. Запасной текст бота (когда владелец ничего не настроил).
     if summary.is_new_globally:
         logger.info("Новый участник %s в чате %s.", member.id, chat_id)
         summary.fallback_text = profile_service.build_welcome_new_text(name)
@@ -446,8 +421,7 @@ async def collect_join_summary(
             summary.fallback_text = profile_service.build_welcome_new_in_chat_text(name)
         return summary
 
-    # 4. Возвращение: участник уже был в этом чате.
-    if chat_user is None:  # страховка от гонки: запись обязана существовать
+    if chat_user is None:
         chat_user = await queries.ensure_chat_user(db, chat_id, member.id)
     summary.chat_user = chat_user
     summary.punishments = list(
@@ -457,34 +431,6 @@ async def collect_join_summary(
         profile, chat_user, summary.punishments, name
     )
     return summary
-
-
-async def handle_new_member(
-    bot: Bot,
-    db: Database,
-    message: Message,
-    member: User,
-) -> Optional[str]:
-    """Обработать вход одного участника и вернуть стандартный текст.
-
-    Тонкая обёртка над :func:`collect_join_summary` — нужна там, где
-    достаточно текста бота без блоков приветствия.
-
-    :param bot: экземпляр бота.
-    :param db: соединение с базой данных.
-    :param message: служебное сообщение о входе.
-    :param member: вошедший пользователь.
-    :returns: текст ответа бота или ``None``.
-    """
-    summary = await collect_join_summary(
-        bot,
-        db,
-        message.chat.id,
-        member,
-        chat_title=message.chat.title,
-        members_count=telegram.resolve_members_count(message.chat),
-    )
-    return summary.fallback_text
 
 
 def welcome_check_duration(settings: dict[str, Any]) -> int:
@@ -541,7 +487,7 @@ async def restrict_newcomer(
             until_date=until,
         )
         return True
-    except Exception as exc:  # noqa: BLE001 - прав может не хватить
+    except Exception as exc:
         logger.error(
             "Не смогла замутить нового участника %s в чате %s: %s",
             user_id,
@@ -589,7 +535,6 @@ async def handle_user_join(
     anonymous = bool(settings.get(config.WELCOME_ANONYMOUS_KEY))
     name = _user_name(member)
 
-    # 1. Профиль, чат и связка «чат — пользователь» плюс данные для сводки.
     summary: Optional[JoinSummary] = None
     try:
         summary = await collect_join_summary(
@@ -600,12 +545,9 @@ async def handle_user_join(
             chat_title=chat_title,
             members_count=members_count,
         )
-    except Exception as exc:  # noqa: BLE001 - сводка не важнее приветствия
+    except Exception as exc:
         error_handler.log_exception("записи входа участника", exc)
 
-    # 2. Мут при входе: помеченным, всем новичкам или проверочный (анонимный
-    #    режим). apply_entry_mute ставит ровно один restrict — с максимальным
-    #    сроком из применимых.
     applied: Optional[tuple[str, int]] = None
     try:
         applied = await apply_entry_mute(
@@ -616,19 +558,17 @@ async def handle_user_join(
             settings,
             check_seconds=welcome_check_duration(settings) if anonymous else 0,
         )
-    except Exception as exc:  # noqa: BLE001 - мут не важнее приветствия
+    except Exception as exc:
         error_handler.log_exception("муте при входе", exc)
 
-    # 3. Блок 1: своё приветствие владельца (текст + фото + кнопки).
     greeting_sent = False
     try:
         greeting_sent = await rules_ui.send_custom_greeting(
             bot, db, chat_id, settings, member
         )
-    except Exception as exc:  # noqa: BLE001 - приветствие не роняет вход
+    except Exception as exc:
         error_handler.log_exception("отправке своего приветствия", exc)
 
-    # 4. Блоки 2 и 3: сводка и инфо о муте уходят одним сообщением.
     blocks: list[str] = []
     show_profile = rules_ui.setting_flag(
         settings, rules_ui.GREETING_PROFILE_KEY, "welcome_show_profile"
@@ -653,7 +593,6 @@ async def handle_user_join(
             )
         )
     elif not greeting_sent and summary is not None and summary.fallback_text:
-        # Владелец ничего не настроил — работает стандартное приветствие.
         blocks.append(summary.fallback_text)
 
     if applied is not None:
@@ -676,16 +615,15 @@ async def handle_user_join(
                 parse_mode=ParseMode.HTML,
             )
             sent = True
-        except Exception as exc:  # noqa: BLE001 - сводка не роняет вход
+        except Exception as exc:
             logger.error(
                 "Не смогла отправить сводку о входе в чат %s: %s", chat_id, exc
             )
 
-    # 5. Правила — отдельным сообщением (если включены).
     try:
         if await rules_ui.send_rules_on_join(bot, db, chat_id, settings, member):
             sent = True
-    except Exception as exc:  # noqa: BLE001 - правила не важнее приветствия
+    except Exception as exc:
         error_handler.log_exception("отправке правил при входе", exc)
 
     logger.info(
@@ -795,7 +733,6 @@ async def apply_join_mute(
             current = 0
     final = max(duration, current)
     if final <= current:
-        # Действующий мут не короче нового — второй restrict не нужен.
         return None
 
     try:
@@ -806,7 +743,7 @@ async def apply_join_mute(
             until_date=mute_until(final),
         )
         return final
-    except Exception as exc:  # noqa: BLE001 - прав может не хватить
+    except Exception as exc:
         logger.error("Не смогла применить join_mute: %s", exc)
         return None
 
@@ -815,7 +752,7 @@ async def _is_marked_newcomer(db: Database, user_id: int) -> bool:
     """Помечен ли аккаунт: спамер, много банов или плохая репутация."""
     try:
         profile = await queries.get_user(db, user_id)
-    except Exception as exc:  # noqa: BLE001 - метка не критична для входа
+    except Exception as exc:
         error_handler.log_exception("проверке меток новичка", exc)
         return False
     return profile is not None and profile_service.is_marked_profile(profile)
@@ -873,7 +810,6 @@ async def apply_entry_mute(
         name = _user_name(member)
 
         if reason == config.MARKED_MUTE_REASON:
-            # Метка: помимо ограничения ведём запись в журнале наказаний.
             result = await punishment.mute_user(
                 bot, db, chat_id, member.id, name, duration, reason, None
             )
@@ -900,7 +836,7 @@ async def apply_entry_mute(
             reason,
         )
         return reason, duration
-    except Exception as exc:  # noqa: BLE001 - мут не должен ронять вход
+    except Exception as exc:
         error_handler.log_exception("муте при входе", exc)
         return None
 
@@ -953,8 +889,6 @@ async def apply_antiraid(
         )
         return profile_service.build_antiraid_kick_text(name)
 
-    # Обычный вход: антирейд никого не ограничивает. Мут при входе — это
-    # отдельные настройки чата, они уже применены в handle_user_join.
     return None
 
 
@@ -1006,16 +940,68 @@ async def apply_raid_protection(
     return profile_service.build_raid_chat_notice_text(len(suspects))
 
 
+async def _process_member_join(
+    bot: Bot,
+    db: Database,
+    chat_id: int,
+    chat_title: Optional[str],
+    members_count: Optional[int],
+    member: User,
+    settings: dict[str, Any],
+) -> None:
+    replies: list[str] = []
+    try:
+        await handle_user_join(
+            bot,
+            db,
+            chat_id,
+            member,
+            settings,
+            chat_title=chat_title,
+            members_count=members_count,
+        )
+    except Exception as exc:
+        error_handler.log_exception(
+            f"обработке входа участника {member.id}", exc
+        )
+
+    if not bool(settings.get("antiraid_enabled", settings.get("antiraid"))):
+        return
+
+    try:
+        manager = antiraid_service.antiraid_manager
+        if await manager.register_join(chat_id, member.id, settings, bot):
+            raid_note = await apply_raid_protection(bot, db, chat_id, settings)
+            if raid_note:
+                replies.append(raid_note)
+        elif manager.is_under_protection(chat_id):
+            await antiraid_service.mute_member(bot, db, chat_id, member.id)
+            await queries.mark_raid_suspects(db, chat_id, [member.id])
+            manager.remember_suspects(chat_id, [member.id])
+        else:
+            antiraid_note = await apply_antiraid(bot, db, chat_id, member)
+            if antiraid_note:
+                replies.append(antiraid_note)
+    except Exception as exc:
+        error_handler.log_exception("реакции антирейда на вход", exc)
+
+    if replies:
+        try:
+            await bot.send_message(chat_id, "\n\n".join(replies))
+        except Exception as exc:
+            error_handler.log_exception("ответе антирейда в чате", exc)
+
+
 @router.message(F.chat.type.in_(GROUP_CHAT_TYPES), F.new_chat_members)
 async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
     """Поприветствовать новых участников и применить антирейд.
 
     Служебное сообщение о входе удаляется (настройка
-    ``delete_service_messages``), а каждый вход обрабатывает
-    :func:`handle_user_join`: своё приветствие владельца, сводка по участнику
-    (в анонимном режиме — без имени и ID), инфо о муте и правила. Сводка и
-    инфо о муте уходят одним сообщением — настройки складываются, а не
-    заменяют друг друга.
+    ``delete_service_messages``). Обработка каждого участника идёт через
+    очередь :data:`join_queue_service.join_queue` — так наплыв входов не
+    упирается во флуд-контрол Telegram и приветствия не теряются. Дубль
+    события (``new_chat_members`` + ``chat_member``) гасится
+    :data:`join_dedup`.
 
     :param message: служебное сообщение о входе.
     :param db: соединение с базой данных.
@@ -1027,65 +1013,66 @@ async def on_new_members(message: Message, db: Database, bot: Bot) -> None:
         chat_id = message.chat.id
         settings = await queries.get_chat_settings(db, chat_id)
 
-        # Системное сообщение о входе скрываем: бот всё равно ответит своим
-        # приветствием, а лишний шум в чате не нужен.
         await delete_service_message(message, settings)
 
-        antiraid_enabled = bool(settings.get("antiraid_enabled", settings.get("antiraid")))
-
-        replies: list[str] = []
-        manager = antiraid_service.antiraid_manager
+        chat_title = message.chat.title
+        members_count = telegram.resolve_members_count(message.chat)
         for member in message.new_chat_members:
             if member.is_bot:
                 continue
-
-            # Приветствие + сводка + мут + правила: один вход — один вызов.
-            try:
-                await handle_user_join(
-                    bot,
-                    db,
-                    chat_id,
-                    member,
-                    settings,
-                    chat_title=message.chat.title,
-                    members_count=telegram.resolve_members_count(message.chat),
+            if not join_dedup.mark("join", chat_id, member.id):
+                continue
+            if not join_queue_service.join_queue.enqueue(
+                chat_id,
+                lambda m=member, s=settings, t=chat_title, mc=members_count: (
+                    _process_member_join(bot, db, chat_id, t, mc, m, s)
+                ),
+            ):
+                await _process_member_join(
+                    bot, db, chat_id, chat_title, members_count, member, settings
                 )
-            except Exception as exc:  # noqa: BLE001 - один вход не ломает других
-                error_handler.log_exception(
-                    f"обработке входа участника {member.id}", exc
-                )
-
-            if not antiraid_enabled:
-                continue
-
-            # 1. Считаем входы: превышение порога означает рейд.
-            if await manager.register_join(chat_id, member.id, settings, bot):
-                raid_note = await apply_raid_protection(bot, db, chat_id, settings)
-                if raid_note:
-                    replies.append(raid_note)
-                continue
-
-            # 2. Рейд уже зафиксирован, защита не снята: новичок — вероятный
-            #    участник атаки, поэтому он получает мут до решения владельца.
-            #    Это состояние активного рейда, а не обычное ожидание: в
-            #    режиме ожидания антирейд никого не мутит.
-            if manager.is_under_protection(chat_id):
-                await antiraid_service.mute_member(bot, db, chat_id, member.id)
-                await queries.mark_raid_suspects(db, chat_id, [member.id])
-                manager.remember_suspects(chat_id, [member.id])
-                continue
-
-            # 3. Обычный вход: антирейд только кикает при всплеске входов и
-            #    больше ничего не делает — мут при входе настраивается
-            #    отдельно (join_mute / marked_mute / анонимный привет).
-            antiraid_note = await apply_antiraid(bot, db, chat_id, member)
-            if antiraid_note:
-                replies.append(antiraid_note)
-
-        if replies:
-            await message.answer("\n\n".join(replies))
-    except Exception as exc:  # noqa: BLE001 - входы не должны ронять бота
+    except Exception as exc:
         error_handler.log_exception("приветствии нового участника", exc)
+
+
+@router.chat_member()
+async def on_chat_member_join(event: ChatMemberUpdated, db: Database, bot: Bot) -> None:
+    """Поймать вход участника вторым каналом — сменой статуса.
+
+    Telegram не всегда шлёт служебное сообщение ``new_chat_members``:
+    при вступлении по инвайт-ссылке иногда приходит только обновление
+    статуса. Без этого обработчика такие входы оставались бы без
+    приветствия. Дубликаты гасит :data:`join_dedup`.
+
+    :param event: обновление статуса участника.
+    :param db: соединение с базой данных.
+    :param bot: экземпляр бота.
+    """
+    try:
+        chat = event.chat
+        if chat.type not in GROUP_CHAT_TYPES:
+            return
+        old_status = event.old_chat_member.status if event.old_chat_member else None
+        new_status = event.new_chat_member.status if event.new_chat_member else None
+        entering = old_status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED)
+        leaving = new_status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED)
+        if not entering or leaving or new_status is None:
+            return
+        member = event.new_chat_member.user
+        if member.is_bot:
+            return
+        if not join_dedup.mark("join", chat.id, member.id):
+            return
+        settings = await queries.get_chat_settings(db, chat.id)
+        if not join_queue_service.join_queue.enqueue(
+            chat.id,
+            lambda m=member, s=settings, t=chat.title: (
+                _process_member_join(bot, db, chat.id, t, None, m, s)
+            ),
+        ):
+            await _process_member_join(bot, db, chat.id, chat.title, None, member, settings)
+    except Exception as exc:
+        error_handler.log_exception("обработке смены статуса участника", exc)
 
 
 @router.message(F.chat.type.in_(GROUP_CHAT_TYPES), F.left_chat_member)
@@ -1105,12 +1092,11 @@ async def on_left_member(message: Message, db: Database) -> None:
         settings = await queries.get_chat_settings(db, message.chat.id)
         await delete_service_message(message, settings)
         await queries.set_member_presence(db, message.chat.id, member.id, False)
-        # Точного числа участников в апдейте нет — уменьшаем то, что знаем сами.
         chat_info = await queries.get_chat(db, message.chat.id)
         known_members = chat_info.members_count if chat_info is not None else 0
         await queries.update_members_count(db, message.chat.id, max(0, known_members - 1))
         logger.info("Участник %s покинул чат %s.", member.id, message.chat.id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("обработке выхода участника", exc)
 
 
@@ -1132,7 +1118,7 @@ async def on_service_message(message: Message, db: Database) -> None:
             logger.info(
                 "Служебное сообщение в чате %s скрыто.", message.chat.id
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("удалении служебного сообщения", exc)
 
 
@@ -1159,7 +1145,7 @@ async def _banned_owner_of(
         try:
             if await queries.is_admin_banned(db, int(candidate)):
                 return int(candidate)
-        except Exception:  # noqa: BLE001 - проверка не важнее работы бота
+        except Exception:
             logger.error(
                 "Не удалось проверить бан пользователя %s", candidate, exc_info=True
             )
@@ -1188,7 +1174,6 @@ async def on_bot_membership(event: ChatMemberUpdated, db: Database, bot: Bot) ->
             logger.info("Бота удалили из чата %s.", chat.id)
             return
 
-        # 1. Чат попадает в базу сразу — не дожидаясь первого сообщения в группе.
         await queries.ensure_chat(
             db,
             chat.id,
@@ -1197,11 +1182,8 @@ async def on_bot_membership(event: ChatMemberUpdated, db: Database, bot: Bot) ->
         )
         logger.info("Чат %s (%s) сохранён в базе.", chat.id, chat.title)
 
-        # 2. Владелец: фильтр по status == "creator" среди администраторов.
         owner_id, owner_channel_id = await permissions.sync_chat_owner(bot, db, chat.id)
 
-        # 2.5. Забаненный в боте пользователь не может держать бота у себя:
-        #      чат сразу отвязывается (и добавление, и владелец чата).
         banned_user = await _banned_owner_of(db, owner_id, event)
         if banned_user is not None:
             logger.warning(
@@ -1219,12 +1201,10 @@ async def on_bot_membership(event: ChatMemberUpdated, db: Database, bot: Bot) ->
             )
             return
 
-        # 3. Владелец обязан быть и в chat_users, иначе он не увидит чат
-        #    в «Моих чатах», пока сам не напишет в группе.
         if owner_id is not None:
             try:
                 await queries.link_chat_owner(db, chat.id, owner_id)
-            except Exception as exc:  # noqa: BLE001 - чат и так уже сохранён
+            except Exception as exc:
                 error_handler.log_exception("связывании владельца с участниками чата", exc)
 
         logger.info(
@@ -1235,5 +1215,5 @@ async def on_bot_membership(event: ChatMemberUpdated, db: Database, bot: Bot) ->
             owner_channel_id,
         )
         await bot.send_message(chat.id, BOT_ADDED_GREETING)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("добавлении бота в чат", exc)

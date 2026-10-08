@@ -22,17 +22,15 @@ from database.models import (
 )
 from services import richtext, time_parser
 
-#: Эмодзи палитры репутации: от «плохо» к «отлично».
 REPUTATION_EMOJI: tuple[str, ...] = ("🔴", "🟠", "🟡", "🟢", "⚪")
 
-#: Верхняя граница «чистой» репутации: выше неё репутация уже «отличная».
 REPUTATION_GOOD_LIMIT: Final[int] = 20
 
 
 def _reputation_value(reputation: object) -> int:
     """Привести репутацию к числу (мусор и ``None`` → 0)."""
     try:
-        return int(reputation)  # type: ignore[arg-type]
+        return int(reputation)
     except (TypeError, ValueError):
         return 0
 
@@ -160,7 +158,6 @@ def build_main_menu_text(guarded_count: int = 0) -> str:
     return "\n".join(lines)
 
 
-#: Что нового в текущей версии: ``версия → текст``. Пустой dict — показывать нечего.
 CHANGELOG: Final[dict[str, str]] = {
     "1.1.0": (
         "• Приветствие больше не теряется: вход ловится двумя каналами "
@@ -736,9 +733,6 @@ def build_antiraid_kick_text(name: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Антирейд и антиспам
-# ---------------------------------------------------------------------------
 def user_mention(name: str, user_id: int) -> str:
     """HTML-ссылка на пользователя (работает даже без юзернейма)."""
     return f'<a href="tg://user?id={user_id}">{escape_text(name or f"ID {user_id}")}</a>'
@@ -959,9 +953,6 @@ def build_nsfw_list_text(entries: Sequence[tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Call режим
-# ---------------------------------------------------------------------------
 def build_call_header_text(
     author_name: Optional[str],
     author_id: Optional[int],
@@ -998,7 +989,7 @@ def build_call_menu_text(chat: ChatInfo, settings: dict[str, object]) -> str:
     emoji = str(settings.get("call_emoji") or config.CALL_EMOJI_DEFAULT)
     delete_messages = bool(settings.get("call_delete_messages"))
     scheduled = len(settings.get("call_scheduled") or [])
-    mark = lambda value: "✅" if value else "❌"  # noqa: E731 - короткий локальный помощник
+    mark = lambda value: "✅" if value else "❌"
 
     return (
         "📞 <b>Call режим — настройки</b>\n"
@@ -1063,9 +1054,6 @@ def build_call_scheduled_list_text(entries: Sequence[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Правила чата и приветствие (тексты владельца с премиум-эмодзи и фото)
-# ---------------------------------------------------------------------------
 def rich_text_snippet(text: str, limit: int = config.RICH_PREVIEW_LENGTH) -> str:
     """Однострочный фрагмент текста владельца для превью в меню.
 
@@ -1328,8 +1316,6 @@ def build_marked_mute_menu_text(chat: ChatInfo, settings: dict[str, object]) -> 
         "<b>Метки:</b>\n"
         "• Спамер (был забанен за спам)\n"
         f"• Много банов ({config.MARKED_MUTE_BAN_MARKS}+ ban_marks)\n"
-        # «&lt;» вместо «<»: без экранирования Telegram видит начало тега
-        # с пустым именем и отклоняет всё сообщение (Unsupported start tag).
         f"• Плохая репутация (&lt; {config.MARKED_MUTE_REPUTATION})\n\n"
         "📊 <b>Настройки:</b>\n"
         f"  🔇 Автомут: {'✅ ВКЛ' if enabled else '❌ ВЫКЛ'}\n"
@@ -1449,7 +1435,6 @@ def build_join_mute_notice_text(name: str, duration_seconds: int) -> str:
     ).format(escape_text(name), time_parser.format_duration(duration_seconds))
 
 
-#: Подписи причин мута при входе для блока в сообщении о входе.
 ENTRY_MUTE_REASON_LABELS: Final[dict[str, str]] = {
     config.MARKED_MUTE_REASON: "подозрительный аккаунт (метки банов)",
     config.JOIN_MUTE_REASON: "мут для всех новичков",
@@ -1542,4 +1527,3 @@ def build_content_cleared_text(kind: str) -> str:
 def build_rules_command_help_text() -> str:
     """Строка-подсказка для справки о команде правил."""
     return f"📜 .{config.COMMAND_RULES} — показать правила чата"
-

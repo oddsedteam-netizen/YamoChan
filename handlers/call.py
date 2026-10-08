@@ -33,13 +33,10 @@ from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер Call режима.
 router: Final[Router] = Router(name="call")
 
-#: Групповые типы чатов, где работают команды вызова.
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
-#: С каких символов может начинаться команда вызова (плюс вариант без префикса).
 CALL_PREFIXES: Final[tuple[str, ...]] = command_filter.COMMAND_PREFIXES
 
 
@@ -107,7 +104,6 @@ async def handle_call(
 
         author = message.from_user
         author_id: Optional[int] = author.id if author is not None else None
-        # Режим выключен — молчим; включён «только для админов» — отказываем.
         allowed, denial = await call_service.is_call_allowed(
             bot, chat_id, author_id, settings, message=message
         )
@@ -123,7 +119,7 @@ async def handle_call(
         if settings.get("call_delete_messages"):
             try:
                 await message.delete()
-            except Exception as exc:  # noqa: BLE001 - прав на удаление может не быть
+            except Exception as exc:
                 logger.info("Не удалось удалить сообщение вызова в чате %s: %s", chat_id, exc)
 
         sent = await call_service.send_call(
@@ -137,14 +133,11 @@ async def handle_call(
         )
         if sent == 0:
             await message.answer("Не получилось никого позвать~ Проверь мои права 🙏")
-    except Exception as exc:  # noqa: BLE001 - вызов не должен ронять бота
+    except Exception as exc:
         error_handler.log_exception("команде вызова", exc)
         await error_handler.notify_user_softly(message)
 
 
-# ---------------------------------------------------------------------------
-# Экран настроек Call
-# ---------------------------------------------------------------------------
 async def _render(callback: CallbackQuery, text: str, markup=None) -> None:
     """Показать новый экран вместо текущего сообщения.
 
@@ -162,12 +155,12 @@ async def _render(callback: CallbackQuery, text: str, markup=None) -> None:
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана Call", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана Call", exc)
 
 
@@ -334,7 +327,6 @@ async def on_call_callbacks(
         parts = (callback.data or "").split(":")
         action = parts[1] if len(parts) > 1 else ""
 
-        # У действий с индексом (cancel_scheduled) чат — предпоследняя часть.
         index = -1
         if action == "cancel_scheduled" and len(parts) >= 4:
             chat_id = _chat_id_from(parts[-2])
@@ -374,14 +366,11 @@ async def on_call_callbacks(
             await _cancel_scheduled(callback, db, bot, chat_id, index)
         else:
             await callback.answer("Не знаю такую кнопку~ 🤔")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке Call", exc)
         await error_handler.notify_user_softly(callback)
 
 
-# ---------------------------------------------------------------------------
-# Ввод от владельца (FSM)
-# ---------------------------------------------------------------------------
 async def _owner_context(
     message: Message,
     state: FSMContext,
@@ -433,7 +422,7 @@ async def on_emoji_input(
             f"✅ Эмодзи для вызовов обновлён: {escape_text(emoji)}",
             reply_markup=inline.call_keyboard(chat.chat_id, settings),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе эмодзи вызова", exc)
         await error_handler.notify_user_softly(message)
 
@@ -464,7 +453,6 @@ async def on_schedule_input(
             return
 
         seconds, text, start = parsed
-        # Из «30м | текст» вырезаем только текст, сохраняя его форматирование.
         content = richtext.slice_content(richtext.content_from_message(message), start)
         author_id = message.from_user.id if message.from_user else 0
         entry = await call_service.schedule_call(
@@ -494,6 +482,6 @@ async def on_schedule_input(
             "Форматирование и фото сохранила~ 💕",
             reply_markup=inline.call_keyboard(chat.chat_id, settings),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе отложенного вызова", exc)
         await error_handler.notify_user_softly(message)

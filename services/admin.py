@@ -41,13 +41,10 @@ from utils import telegram
 
 logger = logging.getLogger(__name__)
 
-#: Момент старта процесса — от него считается аптайм в панели.
 STARTED_AT: Final[float] = time.monotonic()
 
-#: Разделитель в текстах панели.
 DIVIDER: Final[str] = "━━━━━━━━━━━━━━━━━━━━━━"
 
-#: Названия действий для журнала админа.
 ACTION_TITLES: Final[dict[str, str]] = {
     "ban_user": "🚫 Забанен пользователь",
     "unban_user": "✅ Разбанен пользователь",
@@ -66,10 +63,8 @@ ACTION_TITLES: Final[dict[str, str]] = {
     "backup_db": "💾 Бэкап базы данных",
 }
 
-#: Сокращения дней недели для графика активности.
 WEEKDAYS: Final[tuple[str, ...]] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
-#: Ключи настроек чата, которые показывает карточка (подпись, ключ, второй ключ).
 CHAT_SETTING_FLAGS: Final[tuple[tuple[str, str, str], ...]] = (
     ("🔞 18+", "nsfw_commands", ""),
     ("🛡 Антирейд", "antiraid_enabled", "antiraid"),
@@ -97,9 +92,6 @@ class ChatOverview:
         return "не определён"
 
 
-# ---------------------------------------------------------------------------
-# Общие помощники
-# ---------------------------------------------------------------------------
 def is_owner(user_id: Optional[int]) -> bool:
     """Является ли пользователь владельцем бота (он же супер-админ панели).
 
@@ -203,9 +195,6 @@ def _plural(count: int, one: str, few: str, many: str) -> str:
     return many
 
 
-# ---------------------------------------------------------------------------
-# Сбор данных для экранов
-# ---------------------------------------------------------------------------
 async def collect_global_stats(db: Database) -> dict[str, int]:
     """Сводная статистика бота (и аптайм) для главного экрана панели."""
     stats = await queries.get_global_stats(db)
@@ -232,14 +221,14 @@ async def collect_chat_overviews(
     for chat in chats:
         try:
             stats = await queries.get_chat_stats(db, chat.chat_id)
-        except Exception:  # noqa: BLE001 - один чат не должен ломать список
+        except Exception:
             logger.error("Не удалось собрать статистику чата %s", chat.chat_id, exc_info=True)
             stats = {}
         owner: Optional[UserProfile] = None
         if chat.owner_id:
             try:
                 owner = await queries.get_user(db, chat.owner_id)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.error("Не удалось прочитать владельца %s", chat.owner_id, exc_info=True)
         overviews.append(ChatOverview(chat=chat, stats=stats, owner=owner))
     return overviews, total, pages
@@ -274,9 +263,6 @@ async def collect_admin_log(
     return entries, total, pages
 
 
-# ---------------------------------------------------------------------------
-# Главный экран панели
-# ---------------------------------------------------------------------------
 def build_panel_text(stats: dict[str, int]) -> str:
     """Текст главного экрана админ-панели.
 
@@ -315,9 +301,6 @@ def build_panel_text(stats: dict[str, int]) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Быстрые действия
-# ---------------------------------------------------------------------------
 def build_quick_actions_text() -> str:
     """Текст подменю «Быстрые действия»."""
     return (
@@ -370,9 +353,6 @@ def build_backup_error_text() -> str:
     return "❌ Не удалось отправить бэкап~ Проверь логи и права на файл базы."
 
 
-# ---------------------------------------------------------------------------
-# Список чатов и карточка чата
-# ---------------------------------------------------------------------------
 def build_chats_list_text(
     overviews: Sequence[ChatOverview],
     total: int,
@@ -472,9 +452,6 @@ def build_detached_done_text() -> str:
     return "✅ Чат отвязан успешно."
 
 
-# ---------------------------------------------------------------------------
-# Пользователи
-# ---------------------------------------------------------------------------
 def build_users_text(
     total: int,
     bad_reputation: int,
@@ -493,7 +470,6 @@ def build_users_text(
             "👥 Пользователи",
             "",
             f"Всего в базе: {profile_service.format_number(total)}",
-            # «&lt;» вместо «<»: иначе Telegram считает это началом тега.
             f"С плохой репутацией (&lt; {config.BAD_REPUTATION_THRESHOLD}): "
             f"{profile_service.format_number(bad_reputation)}",
             f"Спамеры: {profile_service.format_number(spammers)}",
@@ -604,9 +580,6 @@ def build_ban_confirm_text(name: str, user_id: int) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Забаненные, журнал и поиск
-# ---------------------------------------------------------------------------
 def build_banned_list_text(
     items: Sequence[tuple[AdminBan, Optional[UserProfile]]],
     total: int,
@@ -689,9 +662,6 @@ def build_search_not_found_text() -> str:
     return "Пользователь не найден в базе~ 🤔"
 
 
-# ---------------------------------------------------------------------------
-# Расширенная статистика
-# ---------------------------------------------------------------------------
 def build_activity_lines(daily: dict[str, int], days: int = config.ADMIN_ACTIVITY_DAYS) -> list[str]:
     """Строки «графика» активности по дням с полосками из блоков.
 
@@ -767,9 +737,6 @@ def build_stats_text(
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Рассылка
-# ---------------------------------------------------------------------------
 def build_broadcast_menu_text() -> str:
     """Текст экрана «Рассылка» — выбор получателей."""
     return "📢 Рассылка\n\nВыбери тип:"
@@ -826,9 +793,6 @@ def broadcast_kind_title(kind: str) -> str:
     return "владельцам в ЛС" if kind == "owners" else "во все чаты"
 
 
-# ---------------------------------------------------------------------------
-# Действия владельца
-# ---------------------------------------------------------------------------
 async def notify_user(
     bot: Bot,
     user_id: int,
@@ -849,7 +813,7 @@ async def notify_user(
         return True
     except TelegramAPIError as exc:
         logger.info("Не удалось написать пользователю %s: %s", user_id, exc)
-    except Exception:  # noqa: BLE001 - уведомление не должно ронять бота
+    except Exception:
         logger.error("Неожиданная ошибка уведомления %s", user_id, exc_info=True)
     return False
 
@@ -881,7 +845,7 @@ async def detach_chat(
     if title is None or owner_id is None:
         try:
             chat = await queries.get_chat(db, chat_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Не удалось прочитать чат %s перед отвязкой", chat_id, exc_info=True)
 
     chat_title = title or (chat.display_title if chat is not None else f"Чат {chat_id}")
@@ -892,7 +856,7 @@ async def detach_chat(
             await bot.send_message(chat_id=chat_id, text=config.ADMIN_DETACH_CHAT_MESSAGE)
         except TelegramAPIError as exc:
             logger.info("Предупреждение в чат %s не доставлено: %s", chat_id, exc)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Ошибка предупреждения чата %s", chat_id, exc_info=True)
 
     if notify_owner and owner:
@@ -910,13 +874,13 @@ async def detach_chat(
     except TelegramAPIError as exc:
         left = False
         logger.error("Не удалось выйти из чата %s: %s", chat_id, exc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         left = False
         logger.error("Неожиданная ошибка выхода из чата %s", chat_id, exc_info=True)
 
     try:
         await queries.detach_chat(db, chat_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось удалить данные чата %s", chat_id, exc_info=True)
 
     await queries.log_admin_action(db, "detach_chat", chat_id, f"«{chat_title}» (ID {chat_id})")
@@ -953,7 +917,7 @@ async def ban_user_in_bot(
     detached: list[int] = []
     try:
         owned = await queries.get_owner_chats(db, user_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить чаты пользователя %s", user_id, exc_info=True)
         owned = []
 
@@ -1023,14 +987,14 @@ async def refresh_counters(bot: Bot, db: Database) -> dict[str, int]:
     warns_fixed = 0
     try:
         warns_fixed = await queries.recount_warn_counters(db)
-    except Exception:  # noqa: BLE001 - пересчёт не должен ронять панель
+    except Exception:
         logger.error("Не удалось пересчитать счётчики варнов", exc_info=True)
 
     chats_checked = 0
     members_updated = 0
     try:
         chat_ids = await queries.get_known_chat_ids(db)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить список чатов для пересчёта", exc_info=True)
         chat_ids = []
 
@@ -1042,7 +1006,7 @@ async def refresh_counters(bot: Bot, db: Database) -> dict[str, int]:
         try:
             await queries.update_members_count(db, chat_id, count)
             members_updated += 1
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Не удалось обновить число участников чата %s", chat_id, exc_info=True)
 
     result = {
@@ -1122,7 +1086,7 @@ async def send_broadcast(
             delivered = await richtext.send_content(
                 bot, int(target), content, html_fallback=False
             )
-        except Exception:  # noqa: BLE001 - одна ошибка не останавливает рассылку
+        except Exception:
             logger.error("Ошибка рассылки в %s", target, exc_info=True)
             delivered = False
         if delivered:
@@ -1133,7 +1097,7 @@ async def send_broadcast(
         if on_progress is not None and (index % step == 0 or index == total):
             try:
                 await on_progress(sent, errors)
-            except Exception:  # noqa: BLE001 - прогресс не важнее рассылки
+            except Exception:
                 logger.error("Не удалось обновить прогресс рассылки", exc_info=True)
 
     await queries.log_admin_action(

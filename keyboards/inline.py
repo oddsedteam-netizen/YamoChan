@@ -37,7 +37,6 @@ from utils import faq_texts
 
 logger = logging.getLogger(__name__)
 
-#: Префиксы callback_data (используются и в обработчиках, и в клавиатурах).
 CB_PROFILE: str = "profile:"
 CB_CHATS: str = "chats:"
 CB_CHAT_DETAIL: str = "chat_detail:"
@@ -50,19 +49,14 @@ CB_CALL: str = "call:"
 CB_RULES: str = "rules:"
 CB_GREETING: str = "greeting:"
 CB_FAQ: str = "faq:"
-#: Админ-панель владельца бота (``/adm``).
 CB_ADM: str = "adm:"
-#: Система жалоб пользователей (кнопка в главном меню).
 CB_COMPLAINT: str = "complaint:"
 
-#: Ключи «назад» — куда возвращаться из подменю.
 BACK_MENU: str = "menu"
-#: Ключ «назад в главное меню» для FAQ (``back:main``).
 BACK_MAIN: str = "main"
 BACK_CHATS: str = "chats"
 BACK_PROFILE: str = "profile"
 
-#: Максимальная длина подписи инлайн-кнопки в Telegram.
 MAX_BUTTON_LENGTH: int = 64
 
 
@@ -103,7 +97,7 @@ def _label(text: str, limit: int = MAX_BUTTON_LENGTH) -> str:
     used = 0
     for char in single_line:
         size = 2 if ord(char) > 0xFFFF else 1
-        if used + size > limit - 1:  # одну позицию оставляем под «…»
+        if used + size > limit - 1:
             break
         shortened += char
         used += size
@@ -115,23 +109,16 @@ def _inline_button(text: str, callback_data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(text=_label(text), callback_data=callback_data)
 
 
-# ---------------------------------------------------------------------------
-# Цвета кнопок: Bot API принимает danger (красный), success (зелёный) и
-# primary (синий). Старые клиенты цвет игнорируют, поэтому ошибка раскраски
-# ничего не ломает — клавиатура всё равно остаётся рабочей.
-# ---------------------------------------------------------------------------
-#: Маркеры удаляющих действий в подписи кнопки — такие кнопки краснеют.
 DANGER_BUTTON_MARKERS: Final[tuple[str, ...]] = (
     "очистить",
     "убрать",
-    "удал",  # «удалить» и «удаление»
+    "удал",
     "снять защиту",
     "снять активную защиту",
     "отменить",
     "выключить",
 )
 
-#: Максимальная длина подписи состояния после последнего двоеточия.
 TOGGLE_LABEL_LIMIT: int = 12
 
 
@@ -178,7 +165,6 @@ def button_style(button: InlineKeyboardButton) -> Optional[str]:
         callback_data = button.callback_data or ""
         lowered = text.lower()
 
-        # 1. Откат назад и удаление.
         if text.startswith("🔙") or callback_data.startswith(CB_BACK):
             return config.BUTTON_STYLE_DANGER
         if text.startswith("❌"):
@@ -186,7 +172,6 @@ def button_style(button: InlineKeyboardButton) -> Optional[str]:
         if any(marker in lowered for marker in DANGER_BUTTON_MARKERS):
             return config.BUTTON_STYLE_DANGER
 
-        # 2. Включение и подтверждение.
         if _toggle_state(text) is True:
             return config.BUTTON_STYLE_SUCCESS
         if text.startswith(("➕", "✅")):
@@ -194,10 +179,9 @@ def button_style(button: InlineKeyboardButton) -> Optional[str]:
         if "включить" in lowered:
             return config.BUTTON_STYLE_SUCCESS
 
-        # 3. Справочные разделы.
         if callback_data == f"{CB_FAQ}main":
             return config.BUTTON_STYLE_PRIMARY
-    except Exception:  # noqa: BLE001 - без цвета кнопка всё равно работает
+    except Exception:
         logger.debug(
             "Не подобрала цвет кнопки %r", getattr(button, "text", ""), exc_info=True
         )
@@ -218,7 +202,7 @@ def apply_button_styles(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
                 style = button_style(button)
                 if style:
                     button.style = style
-    except Exception:  # noqa: BLE001 - клавиатура важнее её раскраски
+    except Exception:
         logger.debug("Не удалось раскрасить кнопки", exc_info=True)
     return markup
 
@@ -231,8 +215,6 @@ class StyledKeyboardBuilder(InlineKeyboardBuilder):
         return apply_button_styles(super().as_markup(**kwargs))
 
 
-#: В этом модуле все клавиатуры собираются «раскрашивающим» билдером, поэтому
-#: стиль не нужно указывать в каждой из полусотни кнопок вручную.
 InlineKeyboardBuilder = StyledKeyboardBuilder
 
 
@@ -285,7 +267,6 @@ def faq_main_keyboard() -> InlineKeyboardMarkup:
         builder.button(text=title, callback_data=f"{CB_FAQ}section:{section_id}")
     builder.button(text="🔙 Назад в меню", callback_data=f"{CB_BACK}{BACK_MAIN}")
 
-    # Разделы идут парами, непарный остаток и «Назад» — отдельными рядами.
     rows = [2] * (len(faq_texts.FAQ_SECTIONS) // 2)
     if len(faq_texts.FAQ_SECTIONS) % 2:
         rows.append(1)
@@ -315,7 +296,6 @@ def chats_keyboard(chats: Sequence[ChatInfo]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for index, chat in enumerate(chats[: config.MAX_CHATS_IN_LIST], start=1):
         builder.button(
-            # Название чата приходит из Telegram: убираем переносы строк и лимит длины.
             text=_label(f"💬 Чат №{index} - {chat.display_title}"),
             callback_data=f"{CB_CHAT_DETAIL}{chat.chat_id}",
         )
@@ -525,9 +505,6 @@ def nsfw_list_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Call режим
-# ---------------------------------------------------------------------------
 def call_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboardMarkup:
     """Меню Call режима: тумблер широкий, настройки парами, вызов — широкий.
 
@@ -643,9 +620,6 @@ def build_keyboard(rows: Iterable[Iterable[tuple[str, str]]]) -> InlineKeyboardM
     return builder.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Правила чата и приветствие
-# ---------------------------------------------------------------------------
 def rules_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboardMarkup:
     """Меню «Правила чата»: каждая кнопка занимает всю ширину ряда.
 
@@ -715,7 +689,6 @@ def greeting_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboa
         ),
     )
     if anonymous:
-        # Время проверочного мута имеет смысл только в анонимном режиме.
         builder.row(
             _inline_button(
                 f"⏱ Время мута проверки: {time_parser.format_duration(check_duration)}",
@@ -886,9 +859,6 @@ def content_prompt_keyboard(chat_id: int, prefix: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Админ-панель владельца бота (``callback_data`` с префиксом ``adm:``)
-# ---------------------------------------------------------------------------
 def _paging_buttons(
     builder: InlineKeyboardBuilder,
     section: str,
@@ -1281,9 +1251,6 @@ def admin_user_complaints_keyboard(
     return builder.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Система жалоб пользователей (``callback_data`` с префиксом ``complaint:``)
-# ---------------------------------------------------------------------------
 def complaint_reasons_keyboard() -> InlineKeyboardMarkup:
     """Выбор категории жалобы (по одной кнопке в ряду)."""
     builder = InlineKeyboardBuilder()
@@ -1318,5 +1285,3 @@ def complaint_prompt_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔙 Назад", callback_data=f"{CB_COMPLAINT}open")
     builder.adjust(1)
     return builder.as_markup()
-
-

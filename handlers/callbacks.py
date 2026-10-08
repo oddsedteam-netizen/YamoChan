@@ -30,10 +30,8 @@ from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер инлайн-кнопок.
 router: Final[Router] = Router(name="callbacks")
 
-#: Соответствие коротких ключей кнопок и полей в настройках чата.
 TOGGLE_KEYS: Final[dict[str, str]] = {
     "nsfw": "nsfw_commands",
     "antiraid": "antiraid",
@@ -41,7 +39,6 @@ TOGGLE_KEYS: Final[dict[str, str]] = {
     "service": config.DELETE_SERVICE_MESSAGES_KEY,
 }
 
-#: Человекочитаемые названия переключателей для текста ответа.
 TOGGLE_TITLES: Final[dict[str, str]] = {
     "nsfw": "🔞 18+ команды",
     "antiraid": "🛡 Антирейд",
@@ -49,7 +46,6 @@ TOGGLE_TITLES: Final[dict[str, str]] = {
     "service": "🧹 Служебные сообщения",
 }
 
-#: Текст «Возможности» недоступен / доступа нет.
 NO_ACCESS_TEXT: Final[str] = "Настройки видит только владелец чата~ 🌸"
 
 
@@ -78,12 +74,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке сообщения вместо редактирования", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана кнопок", exc)
 
 
@@ -106,14 +102,13 @@ async def _is_chat_owner(
         return False
     if chat.owner_id is not None:
         return chat.owner_id == user_id
-    # Владелец ещё не определён — уточняем у Telegram и сохраняем результат.
     try:
         owner_id, _ = await permissions.sync_chat_owner(bot, db, chat.chat_id)
         if owner_id is not None:
             return owner_id == user_id
         member = await permissions.get_chat_member(bot, chat.chat_id, user_id)
         return member is not None and member.status == "creator"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("проверке владельца чата", exc)
         return False
 
@@ -131,7 +126,7 @@ async def _show_main_menu(callback: CallbackQuery, db: Database, bot: Bot) -> No
         await queries.ensure_user(db, user.id, user.username, user.first_name)
         try:
             guarded = await antiraid_service.active_protection_chats(db, user.id)
-        except Exception as exc:  # noqa: BLE001 - меню важнее списка защиты
+        except Exception as exc:
             error_handler.log_exception("поиске чатов под защитой", exc)
     await _render(
         callback,
@@ -262,7 +257,7 @@ async def on_profile_callbacks(callback: CallbackQuery, db: Database) -> None:
         else:
             await _show_profile(callback, db)
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке профиля", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -273,7 +268,7 @@ async def on_chats_callbacks(callback: CallbackQuery, db: Database) -> None:
     try:
         await _show_chats(callback, db)
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке «Мои чаты»", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -288,7 +283,7 @@ async def on_chat_detail_callbacks(callback: CallbackQuery, db: Database, bot: B
             return
         await _show_chat_detail(callback, db, bot, int(raw_id))
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке чата", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -305,7 +300,6 @@ async def on_settings_callbacks(callback: CallbackQuery, db: Database, bot: Bot)
     """
     try:
         parts = (callback.data or "").split(":")
-        # parts[0] == "settings"
         if len(parts) < 3:
             await callback.answer()
             return
@@ -329,10 +323,9 @@ async def on_settings_callbacks(callback: CallbackQuery, db: Database, bot: Bot)
             await _toggle_setting(callback, db, bot, user.id, parts[2], _chat_id_from(parts[3]))
             return
 
-        # По умолчанию — просто открыть настройки: settings:open:{chat_id}.
         await _show_settings(callback, db, bot, _chat_id_from(parts[-1]))
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке настроек", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -444,7 +437,7 @@ async def on_back_callbacks(callback: CallbackQuery, db: Database, bot: Bot) -> 
         else:
             await _show_main_menu(callback, db, bot)
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке «Назад»", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -458,5 +451,5 @@ async def on_unknown_callback(callback: CallbackQuery) -> None:
             "Эта кнопка устарела~ Открой меню заново: /start ",
             show_alert=False,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("неизвестной кнопке", exc)

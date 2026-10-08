@@ -29,11 +29,8 @@ from utils import error_handler, html_utils
 
 logger = logging.getLogger(__name__)
 
-#: Признак того, что Telegram нечего править: текст и клавиатура те же.
 _NOT_MODIFIED_MARKERS: Final[tuple[str, ...]] = ("message is not modified",)
 
-#: Ошибки, при которых повтор реально поможет:
-#: 429 → ждём столько, сколько просит Telegram; 5xx/сеть → растущая пауза.
 _RETRYABLE_ERRORS: Final[tuple[type[BaseException], ...]] = (
     TelegramRetryAfter,
     TelegramServerError,
@@ -62,9 +59,6 @@ def _is_not_found(exc: BaseException) -> bool:
     )
 
 
-# ---------------------------------------------------------------------------
-# Надёжная отправка: повторы при флуд-контроле и сетевых сбоях
-# ---------------------------------------------------------------------------
 async def call_with_retry(
     factory: Callable[[], Awaitable[Any]],
     *,
@@ -99,7 +93,6 @@ async def call_with_retry(
             if attempt >= max_attempts:
                 break
             if isinstance(exc, TelegramRetryAfter):
-                # Telegram сам сказал, сколько ждать.
                 delay = float(exc.retry_after) + 0.5
                 error_handler.log_telegram_error(
                     f"{context} (попытка {attempt}/{max_attempts})",
@@ -122,7 +115,6 @@ async def call_with_retry(
                 )
             await asyncio.sleep(delay)
         except TelegramAPIError as exc:
-            # Неповторяемая ошибка (права, разметка) — логируем сразу и падаем.
             error_handler.log_telegram_error(context, exc, level=logging.WARNING)
             raise
 
@@ -157,7 +149,7 @@ async def safe_send_message(
             context=f"{context} → {chat_id}",
         )
         return True
-    except Exception as exc:  # noqa: BLE001 - обёртка никогда не бросает
+    except Exception as exc:
         error_handler.log_telegram_error(f"{context} → {chat_id}", exc)
         return False
 
@@ -188,10 +180,10 @@ async def safe_delete_message(
         return True
     except TelegramBadRequest as exc:
         if _is_not_found(exc):
-            return True  # уже удалено — цель достигнута
+            return True
         logger.debug("Не удалось удалить сообщение %s в %s: %s", message_id, chat_id, exc)
         return False
-    except Exception as exc:  # noqa: BLE001 - обёртка никогда не бросает
+    except Exception as exc:
         error_handler.log_telegram_error(
             f"{context} → {chat_id}#{message_id}", exc, level=logging.WARNING
         )
@@ -230,7 +222,7 @@ async def safe_delete_messages(
             return len(batch)
         logger.debug("Батч-удаление в %s не выполнено: %s", chat_id, exc)
         return 0
-    except Exception as exc:  # noqa: BLE001 - обёртка никогда не бросает
+    except Exception as exc:
         error_handler.log_telegram_error(
             f"{context} → {chat_id} ({len(batch)} шт.)", exc, level=logging.WARNING
         )
@@ -260,7 +252,7 @@ async def safe_send_photo(
             context=f"{context} → {chat_id}",
         )
         return True
-    except Exception as exc:  # noqa: BLE001 - обёртка никогда не бросает
+    except Exception as exc:
         error_handler.log_telegram_error(f"{context} → {chat_id}", exc)
         return False
 
@@ -295,7 +287,7 @@ async def fetch_members_count(bot: Bot, chat_id: int) -> Optional[int]:
     except TelegramAPIError as exc:
         logger.info("getChatMemberCount(%s) не выполнен: %s", chat_id, exc)
         return None
-    except Exception:  # noqa: BLE001 - счётчик участников не критичен
+    except Exception:
         logger.error("Неожиданная ошибка getChatMemberCount(%s)", chat_id, exc_info=True)
         return None
 
@@ -325,7 +317,6 @@ async def render_screen(
     """
     safe_text = html_utils.safe_html_text(text)
     if safe_text != text:
-        # Не молчим в логах: так сломанный тег в данных легко найти.
         logger.debug("В экране был неэкранированный «<» — он исправлен автоматически.")
     plain_fallback = False
 
@@ -342,14 +333,12 @@ async def render_screen(
             )
             plain_fallback = True
         else:
-            # Чаще всего это «message is not modified» — хватит клавиатуры.
             logger.debug("edit_text не сработал: %s", exc)
             try:
                 await message.edit_reply_markup(reply_markup=markup)
                 return
             except TelegramAPIError as inner:
                 if _is_not_modified(inner):
-                    # Экран уже правильный: дублировать сообщение не нужно.
                     logger.debug("Экран не изменился, обновлять нечего: %s", inner)
                     return
                 logger.debug("edit_reply_markup не сработал: %s", inner)

@@ -25,7 +25,6 @@ from services import time_parser
 
 logger = logging.getLogger(__name__)
 
-#: Полностью «открытые» права участника — используются при размуте/снятии бана.
 FULL_PERMISSIONS: ChatPermissions = ChatPermissions(
     can_send_messages=True,
     can_send_audios=True,
@@ -43,7 +42,6 @@ FULL_PERMISSIONS: ChatPermissions = ChatPermissions(
     can_manage_topics=False,
 )
 
-#: Права «в муте»: сообщения и медиа запрещены, чтение остаётся возможным.
 MUTED_PERMISSIONS: ChatPermissions = ChatPermissions(
     can_send_messages=False,
     can_send_audios=False,
@@ -131,7 +129,6 @@ async def unrestrict_member(bot: Bot, chat_id: int, user_id: int) -> None:
             use_independent_chat_permissions=True,
         )
     except TelegramAPIError as exc:
-        # Если Telegram не поддерживает независимые права — пробуем без флага.
         logger.info("Повторная попытка снятия ограничений без независимых прав: %s", exc)
         await bot.restrict_chat_member(
             chat_id=chat_id,
@@ -167,7 +164,7 @@ async def ban_user(
             success=False,
             message="Не получилось забанить~ Проверь мои права админа 🙏",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка бана %s в %s", user_id, chat_id, exc_info=True)
         return PunishmentResult(
             success=False,
@@ -214,7 +211,7 @@ async def unban_user(
             success=False,
             message="У меня не получилось снять бан~ Проверь мои права 🙏",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка разбана %s в %s", user_id, chat_id, exc_info=True)
         return PunishmentResult(
             success=False,
@@ -254,7 +251,7 @@ async def mute_user(
             success=False,
             message="Не получилось замутить~ Проверь мои права админа 🙏",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка мута %s в %s", user_id, chat_id, exc_info=True)
         return PunishmentResult(
             success=False,
@@ -304,7 +301,7 @@ async def unmute_user(
             success=False,
             message="У меня не получилось снять мут~ Проверь мои права 🙏",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка снятия мута %s в %s", user_id, chat_id, exc_info=True)
         return PunishmentResult(
             success=False,
@@ -345,7 +342,6 @@ async def warn_user(
             details={"warns": warns_count, "auto_banned": False},
         )
 
-    # Третий варн — автоматический бессрочный бан.
     ban_result = await ban_user(
         bot,
         db,
@@ -421,7 +417,7 @@ async def kick_user(
             success=False,
             message="Не получилось кикнуть~ Проверь мои права админа 🙏",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка кика %s из %s", user_id, chat_id, exc_info=True)
         return PunishmentResult(
             success=False,
@@ -464,7 +460,7 @@ async def release_expired(
             released.append(config.TYPE_BAN)
         except TelegramAPIError as exc:
             logger.error("Не удалось автоматически разбанить %s: %s", user_id, exc)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Ошибка автоматического разбана %s", user_id, exc_info=True)
     if config.TYPE_MUTE in kinds:
         try:
@@ -472,7 +468,7 @@ async def release_expired(
             released.append(config.TYPE_MUTE)
         except TelegramAPIError as exc:
             logger.error("Не удалось автоматически снять мут с %s: %s", user_id, exc)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Ошибка автоматического снятия мута %s", user_id, exc_info=True)
 
     await queries.deactivate_punishments(db, chat_id, user_id)
@@ -486,7 +482,7 @@ async def process_expired_punishments(bot: Bot, db: Database, limit: int = 50) -
     """Снять все наказания с истёкшим сроком; вернуть число обработанных."""
     try:
         expired = await queries.get_expired_punishments(db, limit)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить истёкшие наказания", exc_info=True)
         return 0
 
@@ -499,7 +495,7 @@ async def process_expired_punishments(bot: Bot, db: Database, limit: int = 50) -
         try:
             await release_expired(bot, db, chat_id, user_id, punishments)
             processed += len(punishments)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error(
                 "Ошибка при снятии истёкших наказаний %s в %s",
                 user_id,

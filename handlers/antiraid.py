@@ -28,10 +28,8 @@ from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер антирейда (кнопки меню и ввод порогов).
 router: Final[Router] = Router(name="antiraid")
 
-#: Сообщение, если владелец ввёл что-то непонятное.
 BAD_INPUT_TEXT: Final[str] = (
     "Не поняла~ Пришли два числа: количество и время. 🤔\n"
     "Например: <code>5 5м</code> или <code>7 10с</code>"
@@ -66,12 +64,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана антирейда", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана антирейда", exc)
 
 
@@ -128,7 +126,7 @@ async def notify_raid(
         )
     except TelegramAPIError as exc:
         logger.error("Не удалось уведомить владельца чата %s: %s", chat.chat_id, exc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка уведомления владельца", exc_info=True)
     return False
 
@@ -139,7 +137,7 @@ async def suspects_report(db: Database, user_ids: Sequence[int]) -> list[tuple[i
     for user_id in user_ids:
         try:
             profile = await queries.get_user(db, user_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             profile = None
         if profile is None:
             report.append((user_id, f"ID {user_id}", None))
@@ -154,9 +152,6 @@ def _chat_id_from(raw: Optional[str]) -> int:
     return int(cleaned) if cleaned.lstrip("-").isdigit() else 0
 
 
-# ---------------------------------------------------------------------------
-# Экраны
-# ---------------------------------------------------------------------------
 async def _show_menu(callback: CallbackQuery, db: Database, bot: Bot, chat_id: int) -> None:
     """Показать меню настроек антирейда."""
     chat = await _owner_chat(callback, db, bot, chat_id)
@@ -254,7 +249,7 @@ async def _apply_lift(
     await antiraid_service.lift_protection(bot, db, chat_id)
     try:
         await bot.send_message(chat_id=chat_id, text=profile_service.build_chat_unlocked_text())
-    except Exception as exc:  # noqa: BLE001 - чат мог стать недоступен
+    except Exception as exc:
         logger.info("Не удалось сообщить чату %s о снятии защиты: %s", chat_id, exc)
     await _render(
         callback,
@@ -294,9 +289,6 @@ async def _keep_protection(callback: CallbackQuery, db: Database, bot: Bot, chat
     await callback.answer()
 
 
-# ---------------------------------------------------------------------------
-# Маршрутизация кнопок
-# ---------------------------------------------------------------------------
 @router.callback_query(F.data.startswith(inline.CB_ANTIRAID))
 async def on_antiraid_callbacks(
     callback: CallbackQuery,
@@ -339,7 +331,7 @@ async def on_antiraid_callbacks(
             await _keep_protection(callback, db, bot, chat_id)
         else:
             await callback.answer("Не знаю такую кнопку~ 🤔")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке антирейда", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -355,14 +347,11 @@ async def on_shield_callbacks(callback: CallbackQuery, db: Database, bot: Bot) -
             await _apply_lift(callback, db, bot, chat_id)
         else:
             await callback.answer("Не знаю такую кнопку~ 🤔")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке снятия защиты", exc)
         await error_handler.notify_user_softly(callback)
 
 
-# ---------------------------------------------------------------------------
-# Ввод порогов (FSM)
-# ---------------------------------------------------------------------------
 async def _save_threshold(
     message: Message,
     state: FSMContext,
@@ -402,7 +391,6 @@ async def _save_threshold(
         minimum_amount = config.ANTIRAID_MIN_THRESHOLD
         minimum_seconds = config.ANTIRAID_MIN_TIMEFRAME
 
-    # Значения сохраняются как ввёл владелец; о слишком низких просто предупреждаем.
     if amount < minimum_amount or seconds < minimum_seconds:
         logger.warning(
             "В чате %s очень низкий порог %s: %s за %s сек (рекомендуется от %s за %s сек).",
@@ -457,7 +445,7 @@ async def on_threshold_input(
     """Принять новое значение порога антирейда."""
     try:
         await _handle_threshold_message(message, state, db, bot, "antiraid")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе порога антирейда", exc)
         await error_handler.notify_user_softly(message)
 
@@ -472,6 +460,6 @@ async def on_spam_threshold_input(
     """Принять новое значение порога антиспама."""
     try:
         await _handle_threshold_message(message, state, db, bot, "spam")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе порога антиспама", exc)
         await error_handler.notify_user_softly(message)

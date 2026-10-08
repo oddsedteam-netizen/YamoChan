@@ -76,8 +76,6 @@ def setup_logging(level: Optional[str] = None) -> None:
         file_handler.setFormatter(formatter)
         file_handler.setLevel(logging.INFO)
 
-        # Отдельный файл только с ошибками: искать по нему быстрее,
-        # чем рыться в основном логе.
         error_log_handler = RotatingFileHandler(
             filename=str(config.ERROR_LOG_FILE),
             maxBytes=config.LOG_FILE_MAX_BYTES,
@@ -94,7 +92,6 @@ def setup_logging(level: Optional[str] = None) -> None:
         root.addHandler(file_handler)
         root.addHandler(error_log_handler)
 
-        # Приглушаем избыточные логи сторонних библиотек.
         logging.getLogger("aiogram.event").setLevel(logging.WARNING)
         logging.getLogger("aiosqlite").setLevel(logging.WARNING)
         logging.getLogger("aiohttp").setLevel(logging.WARNING)
@@ -102,7 +99,7 @@ def setup_logging(level: Optional[str] = None) -> None:
         logger.info("Логирование настроено (уровень %s).", logging.getLevelName(log_level))
         logger.info("Основной лог: %s", config.LOG_FILE)
         logger.info("Файл ошибок: %s", config.ERROR_LOG_FILE)
-    except Exception:  # noqa: BLE001 - логирование не должно ломать запуск
+    except Exception:
         logging.basicConfig(level=logging.INFO, format=config.LOG_FORMAT)
         logging.getLogger(__name__).error("Не удалось настроить логирование", exc_info=True)
 
@@ -137,7 +134,6 @@ def log_telegram_error(
     prefix = f"{context} (чат {chat_id})" if chat_id is not None else context
 
     if isinstance(exc, TelegramRetryAfter):
-        # 429: главный виновник «перестал присылать/удалять» при наплыве.
         logger.log(
             level,
             "⚠️ ФЛУД-КОНТРОЛ Telegram в %s: подожди %s сек и повтори. "
@@ -185,9 +181,6 @@ def log_telegram_error(
     )
 
 
-#: Активные фоновые задачи, запущенные через :func:`spawn`.
-#: Держим сильные ссылки, пока задача не завершится, — иначе GC может
-#: собрать объект до окончания.
 _SPAWNED_TASKS: Final[set[asyncio.Task[Any]]] = set()
 
 
@@ -209,7 +202,7 @@ def spawn(coro: Awaitable[Any], name: str = "background") -> "asyncio.Task[Any]"
             await coro
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - задача не должна падать молча
+        except Exception as exc:
             log_exception(f"фоновой задаче «{name}»", exc)
 
     task = asyncio.create_task(_runner(), name=name)
@@ -251,7 +244,7 @@ async def notify_user_softly(event: TelegramObject, text: str = config.ERROR_MES
             await event.answer(text, show_alert=True)
         elif isinstance(event, Message):
             await event.answer(text)
-    except Exception:  # noqa: BLE001 - не можем ответить, но бот продолжает работу
+    except Exception:
         logger.debug("Не удалось сообщить пользователю об ошибке", exc_info=True)
 
 
@@ -273,9 +266,8 @@ class ErrorMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except asyncio.CancelledError:
-            # Отмена задачи при выключении бота — не ошибка.
             raise
-        except Exception as exc:  # noqa: BLE001 - намеренно ловим всё
+        except Exception as exc:
             log_exception(_describe_event(event), exc)
             await notify_user_softly(event)
             return None
@@ -294,7 +286,7 @@ def _describe_event(event: TelegramObject) -> str:
         if isinstance(event, CallbackQuery):
             return f"callback {event.data!r}"
         return type(event).__name__
-    except Exception:  # noqa: BLE001
+    except Exception:
         return type(event).__name__
 
 
@@ -323,7 +315,7 @@ def register_error_handlers(dp: Dispatcher) -> None:
         dp.callback_query.middleware(ErrorMiddleware())
         dp.errors.register(handle_errors)
         logger.info("Глобальный перехват ошибок включён.")
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось подключить перехват ошибок", exc_info=True)
 
 
@@ -349,7 +341,7 @@ def install_signal_handlers(
         if bot is not None:
             try:
                 loop.create_task(bot.session.close())
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.debug("Не удалось заранее закрыть сессию бота", exc_info=True)
 
     for signal_name in ("SIGINT", "SIGTERM"):
@@ -359,7 +351,6 @@ def install_signal_handlers(
         try:
             loop.add_signal_handler(signal_value, _shutdown, int(signal_value))
         except (NotImplementedError, RuntimeError, ValueError, AttributeError):
-            # Windows и некоторые окружения не поддерживают add_signal_handler.
             logger.debug("Сигнал %s недоступен на этой платформе.", signal_name)
             try:
                 signal.signal(signal_value, lambda signum, _frame: _shutdown(int(signum)))

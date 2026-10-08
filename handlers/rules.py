@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Final, Optional
 
@@ -48,45 +49,31 @@ from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер правил и приветствия.
 router: Final[Router] = Router(name="rules")
 
-#: Групповые типы чатов.
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
-#: Префикс полей настроек для каждого блока.
 FIELD_PREFIXES: Final[dict[str, str]] = {"rules": "rules", "greeting": "greeting"}
 
-#: Флаг включения блока в настройках чата.
 ENABLED_KEYS: Final[dict[str, str]] = {
     "rules": "rules_enabled",
     "greeting": "greeting_enabled",
 }
 
-#: Альтернативные (старые) имена флагов — читаем их тоже.
 ENABLED_ALIASES: Final[dict[str, str]] = {"greeting": "welcome_enabled"}
 
-#: Настройка «показывать правила при входе».
 RULES_JOIN_KEY: Final[str] = "rules_show_on_join"
-#: Настройка «показывать профиль новичка при входе».
 GREETING_PROFILE_KEY: Final[str] = "greeting_show_profile"
-#: Настройка с сохранёнными кнопками приветствия.
 GREETING_BUTTONS_KEY: Final[str] = "greeting_buttons"
-#: Настройки превентивного мута помеченным.
 MARKED_MUTE_KEY: Final[str] = "marked_mute_enabled"
 MARKED_MUTE_DURATION_KEY: Final[str] = "marked_mute_duration"
-#: Настройка «анонимное приветствие»: не раскрывать данные новичка.
 GREETING_ANONYMOUS_KEY: Final[str] = config.WELCOME_ANONYMOUS_KEY
-#: Настройка «длительность проверочного мута» в анонимном режиме.
 WELCOME_CHECK_DURATION_KEY: Final[str] = config.WELCOME_CHECK_DURATION_KEY
-#: Настройки мута при входе для ВСЕХ новых участников.
 JOIN_MUTE_KEY: Final[str] = config.JOIN_MUTE_ENABLED_KEY
 JOIN_MUTE_DURATION_KEY: Final[str] = config.JOIN_MUTE_DURATION_KEY
 
-#: Подписи блоков для ответов.
 KIND_TITLES: Final[dict[str, str]] = {"rules": "Правила", "greeting": "Приветствие"}
 
-#: С каких символов начинаются команды правил.
 COMMAND_PREFIXES: Final[tuple[str, ...]] = (config.COMMAND_PREFIX, "/")
 
 
@@ -200,12 +187,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана правил", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана правил", exc)
 
 
@@ -383,7 +370,6 @@ async def _clear(
     await queries.update_chat_setting(db, chat_id, f"{prefix}_entities", [])
     await queries.update_chat_setting(db, chat_id, f"{prefix}_photo", None)
     if kind == "greeting":
-        # Кнопки без текста приветствия бессмысленны — убираем вместе с ним.
         await queries.update_chat_setting(db, chat_id, GREETING_BUTTONS_KEY, [])
     settings = await queries.update_chat_setting(db, chat_id, ENABLED_KEYS[kind], False)
     if kind == "rules":
@@ -429,12 +415,8 @@ async def _preview(
     )
     markup: Optional[InlineKeyboardMarkup] = None
     values = richtext.placeholder_values(user, chat_title=title, member_count=count)
-    # Предпросмотр показывает РОВНО контент владельца: спец-команды
-    # подставляются данными того, кто нажал кнопку. Бот ничего не добавляет
-    # «от себя» — ни шапки «Привет, имя», ни приветственной строки.
     content_value = richtext.apply_placeholders(content_value, values, user=user)
     if kind == "greeting":
-        # Кнопки владельца видно только у приветствия.
         markup = inline.saved_buttons_keyboard(settings.get(GREETING_BUTTONS_KEY))
 
     sent = await richtext.send_content(
@@ -745,9 +727,6 @@ async def _dispatch(
         await callback.answer("Не знаю такую кнопку~ 🤔")
 
 
-# ---------------------------------------------------------------------------
-# Использование содержимого: правила в чате и приветствие новичка
-# ---------------------------------------------------------------------------
 async def member_count(bot: Bot, chat_id: int) -> Optional[int]:
     """Сколько участников в чате (для ``{count}``) — без падения при ошибке.
 
@@ -756,7 +735,7 @@ async def member_count(bot: Bot, chat_id: int) -> Optional[int]:
     """
     try:
         return int(await bot.get_chat_member_count(chat_id))
-    except Exception as exc:  # noqa: BLE001 - счётчик не важнее сообщения
+    except Exception as exc:
         logger.debug("Не удалось узнать число участников чата %s: %s", chat_id, exc)
         return None
 
@@ -879,8 +858,6 @@ async def send_custom_greeting(
     :returns: ``True``, если сообщение ушло.
     """
     if not enabled(settings, "greeting"):
-        # Логируем причину: раньше молчание здесь выглядело как «бот
-        # перестал присылать приветствие» без единой строки в логах.
         if not setting_flag(
             settings,
             ENABLED_KEYS.get("greeting", ""),
@@ -911,6 +888,25 @@ async def send_custom_greeting(
         html_fallback=False,
     )
     if not sent:
+        for delay in config.GREETING_RETRY_DELAYS:
+            await asyncio.sleep(delay)
+            sent = await richtext.send_content(
+                bot,
+                chat_id,
+                personal,
+                reply_markup=markup,
+                html_fallback=False,
+            )
+            if sent:
+                logger.info(
+                    "Приветствие для участника %s в чат %s ушло с повтора "
+                    "через %.1f с.",
+                    getattr(member, "id", "?"),
+                    chat_id,
+                    delay,
+                )
+                break
+    if not sent:
         logger.error(
             "Приветствие для участника %s в чат %s не отправилось "
             "(send_content вернул False) — подробности в logs/yamochan_errors.log.",
@@ -920,9 +916,6 @@ async def send_custom_greeting(
     return sent
 
 
-# ---------------------------------------------------------------------------
-# Команды в группе
-# ---------------------------------------------------------------------------
 class InfoCommandFilter(BaseFilter):
     """Фильтр: сообщение является командой правил или приветствия."""
 
@@ -959,7 +952,7 @@ async def handle_rules_command(message: Message, db: Database, bot: Bot) -> None
             member_count_value=count,
         ):
             await message.reply(profile_service.build_rules_not_found_text())
-    except Exception as exc:  # noqa: BLE001 - команда не должна ронять бота
+    except Exception as exc:
         error_handler.log_exception("команде правил", exc)
         await error_handler.notify_user_softly(message)
 
@@ -991,15 +984,13 @@ async def handle_greeting_command(message: Message, db: Database, bot: Bot) -> N
             chat_id,
             fallback_title=message.chat.title or "",
         )
-        # Предпросмотр — ровно текст владельца со спец-командами: бот не
-        # дописывает «Привет, имя» от себя.
         values = richtext.placeholder_values(user, chat_title=title, member_count=count)
         personal = richtext.apply_placeholders(
             content(settings, "greeting"), values, user=user
         )
         try:
             await bot.send_message(user.id, profile_service.build_greeting_preview_note_text())
-        except Exception as exc:  # noqa: BLE001 - личка может быть закрыта
+        except Exception as exc:
             logger.info("Предпросмотр приветствия в личку не ушёл: %s", exc)
             await message.reply(profile_service.build_greeting_dm_failed_text())
             return
@@ -1007,14 +998,11 @@ async def handle_greeting_command(message: Message, db: Database, bot: Bot) -> N
             await message.reply("👀 Отправила предпросмотр тебе в личку~")
         else:
             await message.reply(profile_service.build_greeting_dm_failed_text())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("команде приветствия", exc)
         await error_handler.notify_user_softly(message)
 
 
-# ---------------------------------------------------------------------------
-# Кнопки меню настроек
-# ---------------------------------------------------------------------------
 @router.callback_query(F.data.startswith(inline.CB_RULES))
 async def on_rules_callbacks(
     callback: CallbackQuery,
@@ -1031,7 +1019,7 @@ async def on_rules_callbacks(
         action = parts[1] if len(parts) > 1 else ""
         chat_id = _chat_id_from(parts[-1])
         await _dispatch(callback, db, bot, state, "rules", action, chat_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке правил", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -1055,14 +1043,11 @@ async def on_greeting_callbacks(
         action = parts[1] if len(parts) > 1 else ""
         chat_id = _chat_id_from(parts[-1])
         await _dispatch(callback, db, bot, state, "greeting", action, chat_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке приветствия", exc)
         await error_handler.notify_user_softly(callback)
 
 
-# ---------------------------------------------------------------------------
-# Приём текста (и фото) от владельца
-# ---------------------------------------------------------------------------
 async def _owner_context(
     message: Message,
     state: FSMContext,
@@ -1126,10 +1111,8 @@ async def _save_input(
             return
 
         await _save_content(db, chat_id, kind, content_value)
-        # Сохранили содержимое — сразу включаем блок, чтобы не жать тумблер.
         await queries.update_chat_setting(db, chat_id, ENABLED_KEYS[kind], True)
         if kind == "greeting":
-            # Шаг 2/2: предложить добавить инлайн-кнопки.
             await state.set_state(ContentStates.waiting_greeting_buttons)
             await state.update_data(chat_id=chat_id)
             await message.answer(
@@ -1143,7 +1126,7 @@ async def _save_input(
             profile_service.build_content_saved_text(kind),
             reply_markup=inline.content_saved_keyboard(chat_id, kind),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception(f"сохранении содержимого «{kind}»", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1170,9 +1153,6 @@ async def on_greeting_input(
     await _save_input(message, state, db, bot, "greeting")
 
 
-# ---------------------------------------------------------------------------
-# Шаг 2: инлайн-кнопки приветствия и длительность превентивного мута
-# ---------------------------------------------------------------------------
 @router.message(ContentStates.waiting_greeting_buttons, F.chat.type == ChatType.PRIVATE)
 async def on_greeting_buttons_choice(
     message: Message,
@@ -1214,7 +1194,7 @@ async def on_button_text_input(
             profile_service.build_greeting_button_url_prompt_text(),
             reply_markup=inline.greeting_button_prompt_keyboard(chat.chat_id),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе названия кнопки приветствия", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1243,7 +1223,6 @@ async def on_button_url_input(
         data = await state.get_data()
         button_text = str(data.get("button_text") or "")
         if not button_text:
-            # Состояние потерялось (например, после перезапуска) — просим заново.
             await state.set_state(ContentStates.waiting_button_text)
             await message.answer(
                 profile_service.build_greeting_button_name_prompt_text(
@@ -1288,7 +1267,7 @@ async def on_button_url_input(
             ),
             reply_markup=inline.greeting_button_more_keyboard(chat.chat_id),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе ссылки кнопки приветствия", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1331,7 +1310,7 @@ async def on_mute_duration_input(
             profile_service.build_marked_mute_menu_text(chat, settings),
             reply_markup=inline.marked_mute_keyboard(chat.chat_id, settings),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе длительности превентивного мута", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1382,7 +1361,7 @@ async def on_check_duration_input(
             + profile_service.build_greeting_menu_text(chat, settings),
             reply_markup=inline.greeting_keyboard(chat.chat_id, settings),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе времени проверочного мута", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1435,7 +1414,6 @@ async def on_join_mute_duration_input(
             + profile_service.build_join_mute_menu_text(chat, settings),
             reply_markup=inline.join_mute_keyboard(chat.chat_id, settings),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("вводе времени мута при входе", exc)
         await error_handler.notify_user_softly(message)
-

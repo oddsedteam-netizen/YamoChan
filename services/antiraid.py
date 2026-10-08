@@ -30,7 +30,6 @@ from services import punishment, time_parser
 
 logger = logging.getLogger(__name__)
 
-#: Права «чат закрыт»: писать нельзя никому, приглашать тоже.
 CLOSED_PERMISSIONS: Final[ChatPermissions] = ChatPermissions(
     can_send_messages=False,
     can_send_audios=False,
@@ -53,25 +52,16 @@ class AntiRaidManager:
     """Менеджер антирейда — отслеживает входящих юзеров и спам."""
 
     def __init__(self) -> None:
-        # {chat_id: [(user_id, timestamp), ...]}
         self.join_log: dict[int, list[tuple[int, float]]] = defaultdict(list)
-        # {chat_id: [user_id, ...]} — подозрительные юзеры текущего рейда
         self.raid_suspects: dict[int, list[int]] = defaultdict(list)
-        # {(chat_id, user_id): [timestamp, ...]} — лог сообщений для антиспама
         self.message_log: dict[tuple[int, int], list[float]] = defaultdict(list)
-        # {(chat_id, user_id): [(message_id, timestamp), ...]} — что удалять
         self.recent_messages: dict[tuple[int, int], list[tuple[int, float]]] = (
             defaultdict(list)
         )
-        # {chat_id: timestamp} — до какого момента антирейд «на паузе»
         self.cooldown_until: dict[int, float] = {}
-        # Счётчики срабатываний для расширенной статистики админ-панели.
         self.antiraid_hits: int = 0
         self.antispam_hits: int = 0
 
-    # ------------------------------------------------------------------
-    # Антирейд
-    # ------------------------------------------------------------------
     async def register_join(
         self,
         chat_id: int,
@@ -101,13 +91,11 @@ class AntiRaidManager:
         )
 
         self.join_log[chat_id].append((int(user_id), now))
-        # Очищаем старые записи за пределами timeframe.
         self.join_log[chat_id] = [
             (uid, ts) for uid, ts in self.join_log[chat_id] if now - ts <= timeframe
         ]
 
         if len(self.join_log[chat_id]) >= threshold:
-            # РЕЙД ОБНАРУЖЕН
             self.raid_suspects[chat_id] = [uid for uid, _ in self.join_log[chat_id]]
             self.join_log[chat_id].clear()
             self.cooldown_until[chat_id] = now + config.ANTIRAID_COOLDOWN_SECONDS
@@ -168,9 +156,6 @@ class AntiRaidManager:
         for key in [key for key in self.recent_messages if key[0] == chat_id]:
             self.recent_messages.pop(key, None)
 
-    # ------------------------------------------------------------------
-    # Антиспам
-    # ------------------------------------------------------------------
     async def register_message(
         self,
         chat_id: int,
@@ -196,13 +181,11 @@ class AntiRaidManager:
         )
 
         self.message_log[key].append(now)
-        # Очищаем старые записи.
         self.message_log[key] = [
             ts for ts in self.message_log[key] if now - ts <= msg_timeframe
         ]
 
         if len(self.message_log[key]) == msg_threshold:
-            # Порог перейден впервые в этом окне — считаем срабатывание одно.
             self.antispam_hits += 1
             return True
         return len(self.message_log[key]) >= msg_threshold
@@ -230,13 +213,9 @@ class AntiRaidManager:
         self.recent_messages.pop((int(chat_id), int(user_id)), None)
 
 
-#: Глобальный менеджер антирейда и антиспама.
 antiraid_manager: Final[AntiRaidManager] = AntiRaidManager()
 
 
-# ---------------------------------------------------------------------------
-# Механика Telegram
-# ---------------------------------------------------------------------------
 async def _set_chat_permissions(
     bot: Bot,
     chat_id: int,
@@ -257,7 +236,7 @@ async def _set_chat_permissions(
         return True
     except TelegramAPIError as exc:
         logger.error("Не удалось изменить права чата %s: %s", chat_id, exc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка прав чата %s", chat_id, exc_info=True)
     return False
 
@@ -286,7 +265,7 @@ async def revoke_invite_link(bot: Bot, chat_id: int) -> Optional[str]:
     except TelegramAPIError as exc:
         logger.info("Не удалось обновить инвайт-ссылку чата %s: %s", chat_id, exc)
         return None
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка revoke-ссылки %s", chat_id, exc_info=True)
         return None
     if invite:
@@ -301,7 +280,7 @@ async def mute_member(bot: Bot, db: Database, chat_id: int, user_id: int) -> boo
     except TelegramAPIError as exc:
         logger.error("Не удалось замутить %s в %s: %s", user_id, chat_id, exc)
         return False
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка мута %s в %s", user_id, chat_id, exc_info=True)
         return False
     await queries.set_user_muted(db, chat_id, user_id, True, None)
@@ -315,7 +294,7 @@ async def unmute_member(bot: Bot, db: Database, chat_id: int, user_id: int) -> b
     except TelegramAPIError as exc:
         logger.info("Не удалось снять мут с %s в %s: %s", user_id, chat_id, exc)
         return False
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка размута %s в %s", user_id, chat_id, exc_info=True)
         return False
     await queries.set_user_muted(db, chat_id, user_id, False)
@@ -343,16 +322,13 @@ async def delete_recent_messages(
                 deleted += 1
             except TelegramAPIError:
                 continue
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.debug("Не удалось удалить сообщение %s", message_id, exc_info=True)
         antiraid_manager.forget_messages(chat_id, user_id)
     logger.info("В чате %s удалено сообщений: %s.", chat_id, deleted)
     return deleted
 
 
-# ---------------------------------------------------------------------------
-# Состояние защиты
-# ---------------------------------------------------------------------------
 async def is_protection_active(db: Database, chat_id: int) -> bool:
     """Активна ли защита чата (по памяти менеджера или по базе)."""
     if antiraid_manager.is_under_protection(chat_id):
@@ -365,7 +341,7 @@ async def active_protection_chats(db: Database, owner_id: int) -> list[ChatInfo]
     """Чаты владельца, где прямо сейчас включена активная защита."""
     try:
         chats = await queries.get_owner_chats(db, owner_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить чаты владельца %s", owner_id, exc_info=True)
         return []
 
@@ -418,9 +394,6 @@ async def lift_protection(
     return opened
 
 
-# ---------------------------------------------------------------------------
-# Разбор пользовательского ввода
-# ---------------------------------------------------------------------------
 def parse_threshold_input(text: Optional[str]) -> Optional[tuple[int, int]]:
     """Разобрать строку вида «5 5м» в пару ``(количество, секунды)``.
 
@@ -452,5 +425,3 @@ def parse_threshold_input(text: Optional[str]) -> Optional[tuple[int, int]]:
         return None
 
     return count, seconds
-
-

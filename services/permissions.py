@@ -26,24 +26,18 @@ from database.models import ChatInfo
 
 logger = logging.getLogger(__name__)
 
-#: ID служебного аккаунта, от имени которого пишут анонимные админы групп.
 GROUP_ANONYMOUS_BOT_ID: int = 1087968824
 
-#: Статусы, означающие, что участник является администратором.
 ADMIN_STATUSES: frozenset[str] = frozenset({"administrator", "creator"})
 
-#: Статусы, означающие, что участник находится в чате.
 PRESENT_STATUSES: frozenset[str] = frozenset(
     {"creator", "administrator", "member", "restricted"}
 )
 
-#: Статусы, означающие, что участника нет в чате.
 ABSENT_STATUSES: frozenset[str] = frozenset({"left", "kicked"})
 
-#: Кэш администраторов чата: ``chat_id -> (набор id, время замера)``.
 _admin_cache: dict[int, tuple[set[int], float]] = {}
 
-#: Кэш идентификатора самого бота (``getMe`` вызывается один раз на процесс).
 _bot_id_cache: Optional[int] = None
 
 
@@ -80,7 +74,7 @@ async def get_bot_id(bot: Bot) -> Optional[int]:
         return _bot_id_cache
     try:
         me = await bot.get_me()
-    except Exception:  # noqa: BLE001 - без ID просто не исключаем себя
+    except Exception:
         logger.error("Не удалось получить данные бота (getMe)", exc_info=True)
         return None
     _bot_id_cache = int(me.id)
@@ -109,7 +103,7 @@ async def get_chat_admin_ids(bot: Bot, chat_id: int) -> set[int]:
     except TelegramAPIError as exc:
         logger.warning("Не удалось получить админов чата %s: %s", chat_id, exc)
         return set()
-    except Exception:  # noqa: BLE001 - приватность важна, но падать нельзя
+    except Exception:
         logger.error("Неожиданная ошибка админов чата %s", chat_id, exc_info=True)
         return set()
 
@@ -157,14 +151,14 @@ async def get_chat_owner_id(bot: Bot, db: Database, chat_id: int) -> Optional[in
     chat: Optional[ChatInfo] = None
     try:
         chat = await queries.get_chat(db, chat_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось прочитать чат %s", chat_id, exc_info=True)
     if chat is not None and chat.owner_id:
         return int(chat.owner_id)
 
     try:
         owner_id, _ = await sync_chat_owner(bot, db, chat_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось определить владельца чата %s", chat_id, exc_info=True)
         return None
     return int(owner_id) if owner_id else None
@@ -208,7 +202,6 @@ async def get_mention_exclusions(
     return excluded
 
 
-
 @dataclass(slots=True)
 class ModerationRights:
     """Результат проверки прав автора сообщения на модерацию."""
@@ -231,7 +224,7 @@ async def get_chat_member(bot: Bot, chat_id: int, user_id: int) -> Optional[Chat
     except TelegramAPIError as exc:
         logger.info("getChatMember(%s, %s) не выполнен: %s", chat_id, user_id, exc)
         return None
-    except Exception:  # noqa: BLE001 - бот не должен падать из-за сети
+    except Exception:
         logger.error("Неожиданная ошибка getChatMember(%s, %s)", chat_id, user_id, exc_info=True)
         return None
 
@@ -304,7 +297,6 @@ async def is_admin_or_anon(
     except (TypeError, ValueError):
         return False
     if author == GROUP_ANONYMOUS_BOT_ID:
-        # Служебный аккаунт, от имени которого пишут анонимные админы групп.
         return True
     return await is_chat_administrator(bot, chat_id, author)
 
@@ -371,11 +363,10 @@ async def check_mod_permission(
 
     try:
         chat = await queries.get_chat(db, chat_id)
-    except Exception:  # noqa: BLE001 - без чата проверяем остальные условия
+    except Exception:
         logger.error("Не удалось прочитать чат %s", chat_id, exc_info=True)
         chat = None
 
-    # 1. Владелец чата не ограничен настройками команд.
     if await is_chat_owner_of(bot, db, chat, user_id):
         return True, ""
 
@@ -383,16 +374,14 @@ async def check_mod_permission(
     if resolved is None:
         try:
             resolved = await queries.get_chat_settings(db, chat_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Не удалось прочитать настройки чата %s", chat_id, exc_info=True)
             resolved = None
 
-    # 2. Команда выключена для админов — отвечаем причиной отказа.
     name = str(command_name or "").strip().lower()
     if name and name in disabled_mod_commands(resolved):
         return False, config.DISABLED_COMMAND_MESSAGE
 
-    # 3. Права администратора (анонимные админы учтены отдельно).
     if actor_is_admin is not None:
         allowed = bool(actor_is_admin)
     else:
@@ -407,7 +396,7 @@ async def is_bot_administrator(bot: Bot, chat_id: int) -> bool:
     """Проверить, есть ли у самого бота права администратора в чате."""
     try:
         me = await bot.get_me()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить данные бота", exc_info=True)
         return False
     return await is_chat_administrator(bot, chat_id, me.id)
@@ -432,7 +421,6 @@ def is_chat_owner(chat: Optional[ChatInfo], user_id: Optional[int]) -> bool:
     return chat.owner_id is not None and chat.owner_id == user_id
 
 
-
 async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRights:
     """Определить, имеет ли автор сообщения право на модерацию.
 
@@ -449,7 +437,6 @@ async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRight
     sender_chat = message.sender_chat
     from_user = message.from_user
 
-    # --- Анонимный админ группы: пишет от имени самого чата -----------------
     if sender_chat is not None and sender_chat.id == chat_id:
         return ModerationRights(
             allowed=True,
@@ -458,7 +445,6 @@ async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRight
             is_anonymous=True,
         )
 
-    # --- Анонимный админ-канал: убеждаемся, что канал реально админ чата -----
     if sender_chat is not None and sender_chat.type == "channel":
         member = await get_chat_member(bot, chat_id, sender_chat.id)
         if member is not None and member.status in ADMIN_STATUSES:
@@ -485,7 +471,6 @@ async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRight
 
     actor_label = from_user.full_name or str(from_user.id)
 
-    # --- Супер-админ бота из .env ------------------------------------------
     if from_user.id in SUPERADMIN_IDS:
         return ModerationRights(
             allowed=True,
@@ -494,7 +479,6 @@ async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRight
             is_superadmin=True,
         )
 
-    # --- Обычный администратор чата ----------------------------------------
     if await can_restrict_members(bot, chat_id, from_user.id):
         return ModerationRights(
             allowed=True,
@@ -532,14 +516,14 @@ async def is_protected_target(
         me = await bot.get_me()
         if user_id == me.id:
             return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить данные бота", exc_info=True)
 
     try:
         chat = await queries.get_chat(db, chat_id)
         if chat is not None and chat.owner_id == user_id:
             return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось проверить владельца чата %s", chat_id, exc_info=True)
 
     status = await get_member_status(bot, chat_id, user_id)
@@ -560,7 +544,7 @@ async def detect_chat_owner(bot: Bot, chat_id: int) -> tuple[Optional[int], Opti
     except TelegramAPIError as exc:
         logger.error("Не удалось получить админов чата %s: %s", chat_id, exc)
         return None, None
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка при получении админов чата %s", chat_id, exc_info=True)
         return None, None
 
@@ -574,7 +558,6 @@ async def detect_chat_owner(bot: Bot, chat_id: int) -> tuple[Optional[int], Opti
             continue
         owner_id = user.id
         if is_anonymous:
-            # Владелец скрыт — запоминаем публичную «личину» чата/канала.
             owner_channel_id = chat_id
     return owner_id, owner_channel_id
 
@@ -592,7 +575,7 @@ async def sync_chat_owner(bot: Bot, db: Database, chat_id: int) -> tuple[Optiona
         await queries.set_chat_owner(db, chat_id, owner_id, owner_channel_id)
         if await queries.link_chat_owner(db, chat_id, owner_id):
             logger.info("Владелец чата %s определён: %s", chat_id, owner_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось сохранить владельца чата %s", chat_id, exc_info=True)
     return owner_id, owner_channel_id
 
@@ -625,7 +608,7 @@ async def is_chat_owner_of(
             return owner_id == user_id
         member = await get_chat_member(bot, chat.chat_id, user_id)
         return member is not None and member.status == "creator"
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось проверить владельца чата %s", chat.chat_id, exc_info=True)
         return False
 
@@ -703,7 +686,7 @@ async def sync_user_chats(
     try:
         await queries.ensure_user(db, user_id, username, first_name)
         chat_ids = await queries.get_known_chat_ids(db)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить список чатов для %s", user_id, exc_info=True)
         return linked
 
@@ -714,13 +697,11 @@ async def sync_user_chats(
             if chat is None:
                 continue
 
-            # Владелец известен из базы — Telegram не беспокоим.
             if chat.owner_id == user_id:
                 if await queries.link_chat_owner(db, chat_id, user_id):
                     linked.append(chat_id)
                 continue
 
-            # Связка уже есть — чат и так виден в «Моих чатах».
             if await queries.get_chat_user(db, chat_id, user_id) is not None:
                 continue
 
@@ -747,7 +728,7 @@ async def sync_user_chats(
                 await queries.set_member_presence(db, chat_id, user_id, True)
                 linked.append(chat_id)
                 logger.info("Пользователь %s отмечен участником чата %s.", user_id, chat_id)
-        except Exception:  # noqa: BLE001 - один чат не должен ломать синхронизацию
+        except Exception:
             logger.error(
                 "Не удалось связать пользователя %s с чатом %s", user_id, chat_id, exc_info=True
             )
@@ -763,4 +744,3 @@ def extract_actor_id(rights: ModerationRights) -> Optional[int]:
     Для анонимных администраторов возвращается ``None``.
     """
     return None if rights.is_anonymous else rights.actor_id
-

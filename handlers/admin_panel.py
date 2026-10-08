@@ -38,13 +38,10 @@ from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер админ-панели владельца бота.
 router: Final[Router] = Router(name="admin_panel")
 
-#: Слова, которыми админ отменяет ввод.
 CANCEL_WORDS: Final[frozenset[str]] = frozenset({"/cancel", "отмена", "cancel"})
 
-#: Фильтры раздела «Пользователи» → ``(заголовок, параметры выборки)``.
 USER_FILTERS: Final[dict[str, tuple[str, dict[str, Any]]]] = {
     "badrep": (
         "🔴 Плохая репутация",
@@ -92,12 +89,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана админ-панели", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - панель не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана админ-панели", exc)
 
 
@@ -109,14 +106,11 @@ def _parse_int(raw: str, default: int = 0) -> int:
     return default
 
 
-# ---------------------------------------------------------------------------
-# Вспомогательные данные
-# ---------------------------------------------------------------------------
 async def _open_complaints(db: Database) -> int:
     """Сколько жалоб сейчас открыто (для подписи кнопки панели)."""
     try:
         return await queries.count_complaints(db, status=config.COMPLAINT_STATUS_OPEN)
-    except Exception:  # noqa: BLE001 - подпись кнопки не важнее панели
+    except Exception:
         logger.error("Не удалось посчитать открытые жалобы", exc_info=True)
         return 0
 
@@ -146,9 +140,6 @@ async def _user_card_payload(
     return text, markup
 
 
-# ---------------------------------------------------------------------------
-# Экраны панели
-# ---------------------------------------------------------------------------
 async def _show_panel(callback: CallbackQuery, db: Database) -> None:
     """Главный экран админ-панели со сводной статистикой."""
     stats = await admin_service.collect_global_stats(db)
@@ -383,7 +374,6 @@ async def _show_complaints_section(callback: CallbackQuery, db: Database) -> Non
     )
 
 
-#: Заголовки списков жалоб по статусу.
 COMPLAINT_LIST_TITLES: Final[dict[str, str]] = {
     config.COMPLAINT_STATUS_OPEN: "⏳ Открытые жалобы",
     config.COMPLAINT_STATUS_ACCEPTED: "✅ Принятые жалобы",
@@ -481,7 +471,7 @@ async def _send_backup(callback: CallbackQuery, db: Database) -> None:
         await message.answer_document(document, caption=admin_service.build_backup_caption())
         await queries.log_admin_action(db, "backup_db", None, path.name)
         await callback.answer("✅ Бэкап отправлен!")
-    except Exception as exc:  # noqa: BLE001 - бэкап не должен ронять панель
+    except Exception as exc:
         error_handler.log_exception("бэкапе базы данных", exc)
         await callback.answer(admin_service.build_backup_error_text(), show_alert=True)
 
@@ -495,9 +485,6 @@ async def _panel_payload(db: Database) -> tuple[str, InlineKeyboardMarkup]:
     )
 
 
-# ---------------------------------------------------------------------------
-# Вход в панель и маршрутизация кнопок
-# ---------------------------------------------------------------------------
 @router.message(
     command_filter.FlexCommand(*config.ADMIN_COMMANDS),
     F.chat.type == ChatType.PRIVATE,
@@ -523,7 +510,7 @@ async def cmd_admin_panel(message: Message, state: FSMContext, db: Database) -> 
         text, markup = await _panel_payload(db)
         await message.answer(text, reply_markup=markup)
         logger.info("Владелец %s открыл админ-панель.", user.id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("открытии админ-панели", exc)
         await error_handler.notify_user_softly(message)
 
@@ -538,7 +525,6 @@ async def on_admin_callbacks(
     """Обработать все кнопки админ-панели (``callback_data`` = ``adm:…``)."""
     user = callback.from_user
     if user is None or not is_owner(user.id):
-        # Молча игнорируем: панель существует только для владельца бота.
         await callback.answer()
         return
     try:
@@ -548,7 +534,7 @@ async def on_admin_callbacks(
         if not await _dispatch(callback, state, db, bot, action, args):
             logger.info("Неизвестная кнопка админ-панели: %r", callback.data)
             await callback.answer("Не поняла кнопку~ 🤔", show_alert=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке админ-панели", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -703,9 +689,6 @@ async def _dispatch_quick(
         await _show_quick_actions(callback)
 
 
-# ---------------------------------------------------------------------------
-# Действия: владелец чата и бан в боте
-# ---------------------------------------------------------------------------
 async def _open_chat_owner(callback: CallbackQuery, db: Database, chat_id: int) -> None:
     """Открыть профиль владельца из карточки чата."""
     chat = await queries.get_chat(db, chat_id)
@@ -857,8 +840,8 @@ async def _run_broadcast(
                 admin_service.build_broadcast_progress_text(sent, errors, total)
             )
         except TelegramBadRequest:
-            pass  # текст не изменился — это нормально
-        except Exception:  # noqa: BLE001
+            pass
+        except Exception:
             logger.debug("Не удалось обновить прогресс рассылки", exc_info=True)
 
     sent, errors = await admin_service.send_broadcast(
@@ -878,15 +861,12 @@ async def _run_broadcast(
     )
 
 
-# ---------------------------------------------------------------------------
-# Ввод от владельца бота (FSM)
-# ---------------------------------------------------------------------------
 async def _back_to_panel(message: Message, db: Database) -> None:
     """Сбросить состояние и вернуть владельца в главное меню панели."""
     try:
         text, markup = await _panel_payload(db)
         await message.answer(text, reply_markup=markup)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("возврате в админ-панель", exc)
 
 
@@ -923,7 +903,7 @@ async def admin_search_input(message: Message, state: FSMContext, db: Database) 
             await message.answer(admin_service.build_search_not_found_text())
             return
         await message.answer(payload[0], reply_markup=payload[1])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("поиске пользователя в панели", exc)
         await error_handler.notify_user_softly(message)
 
@@ -968,7 +948,7 @@ async def admin_broadcast_content(
             admin_service.build_broadcast_preview_text(content, len(targets), kind),
             reply_markup=inline.admin_broadcast_confirm_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("приёме содержимого рассылки", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1014,7 +994,7 @@ async def admin_complaint_search_input(
                 has_history=int(stats.get("total", 0)) > 0,
             ),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("поиске жалобы по ID", exc)
         await error_handler.notify_user_softly(message)
 
@@ -1052,6 +1032,6 @@ async def admin_message_user(
             "✅ Сообщение отправлено~" if delivered else "Не удалось доставить сообщение 💔"
         )
         await _back_to_panel(message, db)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отправке сообщения пользователю", exc)
         await error_handler.notify_user_softly(message)

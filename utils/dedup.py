@@ -16,7 +16,6 @@ from typing import Callable, Final
 
 logger = logging.getLogger(__name__)
 
-#: Как часто чистить протухшие метки (в секундах).
 _CLEANUP_INTERVAL: Final[float] = 60.0
 
 

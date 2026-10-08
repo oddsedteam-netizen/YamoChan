@@ -26,10 +26,8 @@ from utils import command_filter, error_handler
 
 logger = logging.getLogger(__name__)
 
-#: Роутер диагностики.
 router: Final[Router] = Router(name="diagnostics")
 
-#: Групповые типы чатов.
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
 
@@ -64,7 +62,7 @@ async def collect_bot_rights(bot: Bot, chat_id: int) -> dict[str, Optional[bool]
     }
     try:
         me = await bot.get_me()
-    except Exception as exc:  # noqa: BLE001 - диагностика должна отчёт отдать
+    except Exception as exc:
         logger.warning("Диагностика: не удалось получить данные бота: %s", exc)
         return rights
 
@@ -78,7 +76,6 @@ async def collect_bot_rights(bot: Bot, chat_id: int) -> dict[str, Optional[bool]
 
     status = member.status
     if status == ChatMemberStatus.CREATOR:
-        # У создателя все права есть всегда, отдельные флаги Telegram не шлёт.
         return {key: True for key in rights}
     if status != ChatMemberStatus.ADMINISTRATOR:
         return {key: False for key in rights}
@@ -116,14 +113,12 @@ async def cmd_diagnostics(message: Message, db: Database, bot: Bot) -> None:
         rights = await collect_bot_rights(bot, chat_id)
         greeting_content = richtext.content_from_settings(settings, "greeting")
 
-        # Главная часть проверки — реальная отправка в чат: она покажет
-        # точную причину отказа Telegram, а не догадку.
         test_sent = False
         test_error = ""
         try:
             await bot.send_message(chat_id, "🩺 Проверка связи YamoChan…")
             test_sent = True
-        except Exception as exc:  # noqa: BLE001 - причину покажем в отчёте
+        except Exception as exc:
             test_error = f"{type(exc).__name__}: {exc}"
             logger.error(
                 "Диагностика чата %s: тестовая отправка не удалась — %s",
@@ -152,6 +147,6 @@ async def cmd_diagnostics(message: Message, db: Database, bot: Bot) -> None:
             "ок" if test_sent else "отказ",
             "включено" if settings.get("greeting_enabled") else "выключено",
         )
-    except Exception as exc:  # noqa: BLE001 - команда не должна ронять бота
+    except Exception as exc:
         error_handler.log_exception("команде диагностики", exc)
         await error_handler.notify_user_softly(message)

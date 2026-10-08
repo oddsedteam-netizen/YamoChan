@@ -19,10 +19,8 @@ from typing import Final, Optional
 
 logger = logging.getLogger(__name__)
 
-#: Имя файла-лока в папке с данными.
 LOCK_FILENAME: Final[str] = "bot.lock"
 
-#: Сообщение при попытке второго запуска.
 ALREADY_RUNNING_MESSAGE: Final[str] = (
     "Бот уже запущен другим процессом с этим же токеном. "
     "Второй экземпляр остановлен: иначе Telegram будет отдавать события "
@@ -43,10 +41,9 @@ def _pid_alive(pid: int) -> bool:
     """
     if pid <= 0:
         return False
-    if os.name == "nt":  # Windows
+    if os.name == "nt":
         import ctypes
 
-        # PROCESS_QUERY_LIMITED_INFORMATION достаточно для проверки的存在.
         still_active = 259
         handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
         if not handle:
@@ -101,7 +98,6 @@ class InstanceLock:
         :raises AlreadyRunningError: если лок уже держит живой процесс.
         """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Попытка 1: создать файл атомарно. Успех — лок наш.
         try:
             self._write_pid(exclusive=True)
             self._acquired = True
@@ -109,14 +105,11 @@ class InstanceLock:
         except FileExistsError:
             pass
 
-        # Попытка 2: файл уже есть. Если его держит живой чужой процесс —
-        # это второй бот, запускаться нельзя.
         owner = self._read_owner()
         if owner is not None and owner != os.getpid() and _pid_alive(owner):
             raise AlreadyRunningError(
                 f"{ALREADY_RUNNING_MESSAGE} (процесс {owner}, файл {self._path.name})"
             )
-        # Мёртвый PID (бот упал) или наш собственный — лок можно переиспользовать.
         self._write_pid(exclusive=False)
         self._acquired = True
 
@@ -143,7 +136,7 @@ class InstanceLock:
         self._acquired = False
         try:
             self._path.unlink(missing_ok=True)
-        except OSError:  # pragma: no cover - файл мог быть занят
+        except OSError:
             logger.debug("Не удалось удалить файл-лок %s.", self._path)
 
     def _read_owner(self) -> Optional[int]:

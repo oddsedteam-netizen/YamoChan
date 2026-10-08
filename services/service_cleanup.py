@@ -30,13 +30,10 @@ class ServiceCleanupQueue:
 
     def __init__(self) -> None:
         """Инициализировать пустые очереди и счётчики."""
-        #: chat_id → очередь message_id (FIFO, с ограничением по размеру).
         self._queues: dict[int, deque[int]] = {}
         self._worker: Optional[asyncio.Task[Any]] = None
         self._stopping = False
-        #: Сколько раз подряд батч чата не удалялся (защита от вечного цикла).
         self._attempts: dict[int, int] = {}
-        #: Счётчики для статистики.
         self.enqueued = 0
         self.deleted = 0
         self.failed = 0
@@ -56,7 +53,6 @@ class ServiceCleanupQueue:
         if self._stopping:
             return
         if self.pending >= config.SERVICE_CLEANUP_QUEUE_MAX:
-            # Защита памяти: сбрасываем самое старое сообщение.
             self.dropped += 1
             logger.warning(
                 "Очередь удаления служебных сообщений переполнена (%s) — "
@@ -98,7 +94,7 @@ class ServiceCleanupQueue:
                 await self._flush_all(bot)
             except asyncio.CancelledError:
                 raise
-            except Exception:  # noqa: BLE001 - воркер не должен умирать
+            except Exception:
                 logger.error(
                     "Ошибка в воркере удаления служебных сообщений", exc_info=True
                 )
@@ -140,14 +136,10 @@ class ServiceCleanupQueue:
                     len(batch),
                 )
             else:
-                # Не удалилось — возвращаем в начало очереди и повторим:
-                # чаще всего причина 429, и повтор пройдёт после паузы.
                 self.failed += len(batch)
                 attempts = self._attempts.get(chat_id, 0) + 1
                 self._attempts[chat_id] = attempts
                 if attempts >= 10:
-                    # Постоянная отказка (обычно нет прав can_delete_messages) —
-                    # бросаем батч, но с ОШИБКОЙ в лог, чтобы её точно увидели.
                     self.dropped += len(batch)
                     self._attempts.pop(chat_id, None)
                     logger.error(
@@ -168,12 +160,11 @@ class ServiceCleanupQueue:
                     attempts,
                 )
                 queue.extendleft(reversed(batch))
-                break  # этот чат уже отказал — идём к следующему циклу
+                break
 
             if self.pending and config.SERVICE_CLEANUP_BATCH_DELAY:
                 await asyncio.sleep(config.SERVICE_CLEANUP_BATCH_DELAY)
 
-        # Чистим пустые чаты.
         for chat_id in [cid for cid, q in self._queues.items() if not q]:
             self._queues.pop(chat_id, None)
 
@@ -218,5 +209,4 @@ class ServiceCleanupQueue:
             )
 
 
-#: Глобальная очередь удаления служебных сообщений проекта.
 service_cleanup: Final[ServiceCleanupQueue] = ServiceCleanupQueue()

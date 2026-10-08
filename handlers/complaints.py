@@ -35,22 +35,17 @@ from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер жалоб.
 router: Final[Router] = Router(name="complaints")
 
-#: Текст, если описание слишком короткое.
 SHORT_DESCRIPTION_TEXT: Final[str] = (
     "Слишком коротко~ Опиши ситуацию подробнее (минимум "
     f"{config.COMPLAINT_MIN_LENGTH} символов) 🌸"
 )
 
-#: Текст, если на шаге фото пришло что-то непонятное.
 PHOTO_HINT_TEXT: Final[str] = "Пришли фото одним сообщением или нажми «⏭ Пропустить» 🌸"
 
-#: Текст, если пользователь пишет вместо нажатия «Отправить».
 CONFIRM_HINT_TEXT: Final[str] = "Нажми «✅ Отправить» или «❌ Отмена» 🌸"
 
-#: Команды и слова, которыми пользователь отменяет диалог.
 CANCEL_WORDS: Final[frozenset[str]] = frozenset({"/cancel", "отмена", "cancel"})
 
 
@@ -69,13 +64,10 @@ class ComplaintAdminStates(StatesGroup):
     waiting_reply = State()
 
 
-#: Ответ администрации не длиннее этого значения.
 RESPONSE_LIMIT: Final[int] = 1000
 
-#: Слова отмены диалога.
 CANCEL_WORDS: Final[frozenset[str]] = frozenset({"/cancel", "отмена", "cancel"})
 
-#: Слова «ответить стандартно» вместо текста.
 SKIP_WORDS: Final[frozenset[str]] = frozenset({"/skip", "skip", "пропустить", "-"})
 
 
@@ -100,12 +92,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана жалобы", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана жалобы", exc)
 
 
@@ -116,7 +108,7 @@ async def _show_main_menu(message: Message) -> None:
             profile_service.build_main_menu_text(),
             reply_markup=inline.main_menu_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("возврате в меню после жалобы", exc)
 
 
@@ -125,9 +117,6 @@ def _is_cancel(text: Optional[str]) -> bool:
     return (text or "").strip().lower() in CANCEL_WORDS
 
 
-# ---------------------------------------------------------------------------
-# Инлайн-кнопки жалобы
-# ---------------------------------------------------------------------------
 @router.callback_query(F.data == f"{inline.CB_COMPLAINT}open")
 async def complaint_open(callback: CallbackQuery, state: FSMContext) -> None:
     """Открыть экран выбора категории жалобы."""
@@ -139,7 +128,7 @@ async def complaint_open(callback: CallbackQuery, state: FSMContext) -> None:
             inline.complaint_reasons_keyboard(),
         )
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("открытии экрана жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -161,7 +150,7 @@ async def complaint_reason(callback: CallbackQuery, state: FSMContext) -> None:
             inline.complaint_prompt_keyboard(),
         )
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("выборе категории жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -177,7 +166,7 @@ async def complaint_cancel(callback: CallbackQuery, state: FSMContext) -> None:
             inline.back_to_menu_keyboard(),
         )
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отмене жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -203,7 +192,7 @@ async def complaint_skip_photo(callback: CallbackQuery, state: FSMContext) -> No
             inline.complaint_confirm_keyboard(),
         )
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("пропуске фото жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -258,14 +247,11 @@ async def complaint_confirm(
             inline.back_to_menu_keyboard(),
         )
         await callback.answer("Жалоба отправлена~ 💕")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отправке жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
 
-# ---------------------------------------------------------------------------
-# Ввод текста и фото
-# ---------------------------------------------------------------------------
 @router.message(ComplaintStates.waiting_description, F.chat.type == ChatType.PRIVATE)
 async def complaint_description(message: Message, state: FSMContext) -> None:
     """Принять описание жалобы и перейти к шагу фото."""
@@ -292,7 +278,7 @@ async def complaint_description(message: Message, state: FSMContext) -> None:
             complaints_service.build_photo_prompt_text(),
             reply_markup=inline.complaint_photo_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("приёме описания жалобы", exc)
         await error_handler.notify_user_softly(message)
 
@@ -328,7 +314,7 @@ async def complaint_photo(message: Message, state: FSMContext) -> None:
             ),
             reply_markup=inline.complaint_confirm_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("приёме фото жалобы", exc)
         await error_handler.notify_user_softly(message)
 
@@ -346,14 +332,10 @@ async def complaint_waiting_confirm(message: Message, state: FSMContext) -> None
             CONFIRM_HINT_TEXT,
             reply_markup=inline.complaint_confirm_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("подсказке о подтверждении жалобы", exc)
 
 
-# ---------------------------------------------------------------------------
-# Разбор жалоб владельцем бота (callback_data ``adm:complaint:…``)
-# ---------------------------------------------------------------------------
-#: Пометки решения, которые добавляются в карточку после разбора.
 DECISION_MARKS: Final[dict[str, str]] = {
     config.COMPLAINT_STATUS_ACCEPTED: "✅ ПРИНЯТА",
     config.COMPLAINT_STATUS_REJECTED: "❌ ОТКЛОНЕНА",
@@ -525,7 +507,7 @@ async def _finish_decision(
             )
         except TelegramBadRequest as exc:
             logger.debug("Карточка жалобы #%s не обновилась: %s", complaint_id, exc)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Неожиданная ошибка обновления карточки жалобы", exc_info=True)
     return complaint
 
@@ -611,7 +593,7 @@ async def on_admin_complaint_callbacks(
             await callback.answer("Не поняла кнопку~ 🤔", show_alert=True)
             return
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("кнопке жалобы", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -664,7 +646,7 @@ async def admin_decision_input(
                 complaint, has_history=int(stats.get("total", 0)) > 0
             ),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("ответе на жалобу", exc)
         await error_handler.notify_user_softly(message)
 
@@ -703,7 +685,7 @@ async def admin_reply_input(
         complaint = await queries.get_complaint(db, complaint_id)
         if complaint is not None:
             await _render_card_message(message, db, complaint)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("ответе юзеру по жалобе", exc)
         await error_handler.notify_user_softly(message)
 
@@ -716,5 +698,5 @@ async def _render_card_message(message: Message, db: Database, complaint: Compla
             complaints_service.build_card_text(complaint),
             reply_markup=_card_keyboard(complaint, has_history=int(stats.get("total", 0)) > 0),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отправке карточки жалобы", exc)

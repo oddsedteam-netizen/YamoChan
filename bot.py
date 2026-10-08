@@ -52,7 +52,6 @@ from utils import error_handler, lock
 
 logger = logging.getLogger(__name__)
 
-#: Список команд для меню Telegram.
 BOT_COMMANDS: Final[tuple[BotCommand, ...]] = (
     BotCommand(command="start", description="Открыть меню и профиль"),
     BotCommand(command="help", description="Что я умею"),
@@ -80,7 +79,6 @@ class DatabaseMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-#: Короткий ответ забаненному пользователю на нажатие кнопки.
 BANNED_ALERT_TEXT: Final[str] = config.ADMIN_BANNED_ALERT
 
 
@@ -92,7 +90,7 @@ def _is_private_event(event: TelegramObject) -> bool:
     if isinstance(event, CallbackQuery):
         message = event.message
         if message is None:
-            return True  # кнопки инлайн-режима тоже считаем личкой бота
+            return True
         return getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE
     return getattr(getattr(event, "chat", None), "type", None) == ChatType.PRIVATE
 
@@ -130,7 +128,7 @@ class AdminBanMiddleware(BaseMiddleware):
 
         try:
             ban = await queries.get_admin_ban(self._db, int(user.id))
-        except Exception as exc:  # noqa: BLE001 - проверка не должна ломать бота
+        except Exception as exc:
             error_handler.log_exception("проверке бана в боте", exc)
             return await handler(event, data)
         if ban is None:
@@ -155,7 +153,7 @@ class AdminBanMiddleware(BaseMiddleware):
                 await event.answer(
                     config.ADMIN_BANNED_MESSAGE.format(reason=ban.display_reason)
                 )
-        except Exception:  # noqa: BLE001 - уведомление не важнее блокировки
+        except Exception:
             logger.debug("Не удалось уведомить забаненного пользователя", exc_info=True)
         self._notified[user_id] = now
         if len(self._notified) > 1000:
@@ -173,22 +171,11 @@ def build_dispatcher(db: Database) -> Dispatcher:
     """
     dispatcher = Dispatcher(storage=MemoryStorage())
 
-    # База данных доступна всем обработчикам.
     dispatcher.update.middleware(DatabaseMiddleware(db))
-    # Забаненные ботом пользователи не могут пользоваться личкой.
     dispatcher.message.outer_middleware(AdminBanMiddleware(db))
     dispatcher.callback_query.outer_middleware(AdminBanMiddleware(db))
-    # Подсчёт сообщений в группах (требование проекта №8).
     dispatcher.message.outer_middleware(events.MessageCounterMiddleware(db))
 
-    # Порядок важен: первым идёт роутер жалоб — он владеет кнопками
-    # ``adm:complaint:…``; сразу за ним — админ-панель владельца: команда /adm
-    # должна ловиться раньше общих роутеров, иначе её перехватит модерация или
-    # личка, и панель «не откроется». Диагностика обязана идти ДО модерации:
-    # ``.диагностика`` иначе съест фильтр «неизвестная команда». Дальше:
-    # антирейд (со своими состояниями) → ролевые команды → Call →
-    # правила/приветствие → личка (/start) → модерация → события чата → FAQ →
-    # кнопки.
     dispatcher.include_router(complaints.router)
     dispatcher.include_router(admin_panel.router)
     dispatcher.include_router(antiraid.router)
@@ -219,7 +206,6 @@ async def expiration_worker(db: Database, bot: Bot, stop_event: asyncio.Event) -
         try:
             await punishment.process_expired_punishments(bot, db)
             cleanup_counter += 1
-            # Раз в ~30 минут чистим журнал сообщений старше TTL.
             interval_count = max(1, 30 * 60 // max(1, config.EXPIRATION_CHECK_INTERVAL))
             if cleanup_counter >= interval_count:
                 cleanup_counter = 0
@@ -231,7 +217,7 @@ async def expiration_worker(db: Database, bot: Bot, stop_event: asyncio.Event) -
                     logger.info("Журнал сообщений очищен: удалено %d записей.", removed)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001 - воркер не должен умирать
+        except Exception:
             logger.error("Ошибка в воркере наказаний", exc_info=True)
 
         try:
@@ -256,7 +242,7 @@ async def watchdog(dp: Dispatcher, stop_event: asyncio.Event) -> None:
         await dp.stop_polling()
     except asyncio.CancelledError:
         raise
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось корректно остановить поллинг", exc_info=True)
 
 
@@ -268,7 +254,7 @@ async def set_bot_commands(bot: Bot) -> None:
     try:
         await bot.set_my_commands(list(BOT_COMMANDS))
         logger.info("Список команд бота обновлён.")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("установке списка команд", exc)
 
 
@@ -281,7 +267,7 @@ async def run_polling(dp: Dispatcher, bot: Bot, stop_event: asyncio.Event) -> No
     """
     try:
         allowed_updates = dp.resolve_used_update_types()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("определении типов апдейтов", exc)
         allowed_updates = None
     logger.info("Подписка на апдейты: %s", allowed_updates or "все")
@@ -292,14 +278,12 @@ async def run_polling(dp: Dispatcher, bot: Bot, stop_event: asyncio.Event) -> No
                 bot,
                 allowed_updates=allowed_updates,
                 handle_signals=False,
-                # Лимит одновременных апдейтов: без него наплыв входов
-                # создаёт сотни параллельных задач и ловит флуд-контрол.
                 tasks_concurrency_limit=config.UPDATE_CONCURRENCY_LIMIT,
             )
             break
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - поллинг перезапускаем сами
+        except Exception as exc:
             error_handler.log_exception("long-polling", exc)
             await asyncio.sleep(max(1, config.POLLING_RESTART_DELAY))
 
@@ -317,8 +301,6 @@ async def main() -> int:
     error_handler.install_loop_exception_handler(asyncio.get_running_loop())
     logger.info(f"🚀 {config.BOT_NAME} v{config.BOT_VERSION} запущена~")
 
-    # Диагностика окружения: с неправильным .env бот «не работает» без
-    # единой ошибки — поэтому пишем в лог, откуда взяты настройки.
     env_loaded = [
         str(path) for path in (config.ENV_FILE, config.LOCAL_ENV_FILE) if path.exists()
     ]
@@ -329,8 +311,6 @@ async def main() -> int:
         config.LOG_LEVEL,
     )
 
-    # Диагностика админ-панели: с пустым BOT_OWNER_ID команда /adm молчит,
-    # и внешне это выглядит как «панель не работает».
     if config.BOT_OWNER_ID > 0:
         logger.info("🔧 BOT_OWNER_ID: %s — админ-панель открыта владельцу.", config.BOT_OWNER_ID)
     else:
@@ -346,9 +326,6 @@ async def main() -> int:
         )
         return 1
 
-    # Файловый лок: два бота с одним токеном дерутся за getUpdates, Telegram
-    # отдаёт события только одному, и приветствия теряются. Лучше честно
-    # отказаться стартовать, чем работать «через раз».
     instance_lock = lock.InstanceLock(config.DB_PATH.parent / lock.LOCK_FILENAME)
     try:
         instance_lock.acquire()
@@ -362,12 +339,9 @@ async def main() -> int:
     tasks: list[asyncio.Task[Any]] = []
 
     try:
-        # 1. База данных: соединение и схема (CREATE TABLE IF NOT EXISTS).
         await db.connect()
         await db.init_schema()
 
-        # 2. Бот и диспетчер. Сессия с явным таймаутом: при наплыве запросы
-        #    не должны висеть минутами без ответа.
         session = AiohttpSession(
             timeout=config.TELEGRAM_REQUEST_TIMEOUT,
             limit=config.TELEGRAM_SESSION_LIMIT,
@@ -383,39 +357,33 @@ async def main() -> int:
         try:
             me = await bot.get_me()
             logger.info("YamoChan на связи: @%s (ID %s)", me.username, me.id)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             error_handler.log_exception("проверке токена", exc)
             logger.error("Похоже, токен неверный~ Проверь значение BOT_TOKEN в .env")
             return 1
 
         await set_bot_commands(bot)
 
-        # Восстанавливаем отложенные вызовы, сохранённые в настройках чатов.
         await call_service.restore_scheduled(bot, db)
 
-        # 3. Фоновые задачи: воркер наказаний, воркер удаления служебных
-        #    сообщений, стоп-вотчер поллинга.
         tasks.append(asyncio.create_task(expiration_worker(db, bot, stop_event)))
         tasks.append(asyncio.create_task(watchdog(dp, stop_event)))
         service_cleanup_service.service_cleanup.start(bot, stop_event)
 
-        # 4. Поллинг с автоперезапуском.
         await run_polling(dp, bot, stop_event)
         return 0
     except KeyboardInterrupt:
         logger.info("Остановка по Ctrl+C~ До встречи! 💕")
         return 0
-    except Exception as exc:  # noqa: BLE001 - верхний уровень не должен падать
+    except Exception as exc:
         error_handler.log_exception("работе бота", exc)
         return 1
     finally:
         stop_event.set()
-        # Дожидаемся хвостов: входы и служебные удаления должны долиться,
-        # пока сессия бота ещё открыта.
         try:
             await join_queue_service.join_queue.drain(timeout=5.0)
             await service_cleanup_service.service_cleanup.drain(bot, timeout=3.0)
-        except Exception:  # noqa: BLE001 - остановка не должна ломаться
+        except Exception:
             logger.error("Не удалось дождаться фоновых очередей", exc_info=True)
         service_cleanup_service.service_cleanup.stop()
         join_queue_service.join_queue.stop()
@@ -434,11 +402,11 @@ async def main() -> int:
         if bot is not None:
             try:
                 await bot.session.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.debug("Сессия бота уже закрыта", exc_info=True)
         try:
             await db.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Не удалось корректно закрыть базу данных", exc_info=True)
         instance_lock.release()
         logger.info("YamoChan выключена~ 💤")

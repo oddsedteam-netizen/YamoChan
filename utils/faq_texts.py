@@ -16,16 +16,13 @@ from typing import Final
 
 import config
 
-#: Заголовок главного экрана FAQ.
 FAQ_TITLE: Final[str] = "❓ FAQ — как пользоваться YamoChan"
-#: Вступление и заголовок списка разделов.
 FAQ_INTRO: Final[str] = (
     "Привет! Я собрала для тебя гайд по всем разделам~ 💕\n"
     "Выбери что тебя интересует:\n\n"
     "📚 Разделы:"
 )
 
-#: Разделы FAQ: ``(идентификатор, подпись кнопки)`` в порядке показа.
 FAQ_SECTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("start", "🚀 Начало работы"),
     ("profile", "👤 Профиль"),
@@ -39,7 +36,6 @@ FAQ_SECTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("faq", "❓ Частые вопросы"),
 )
 
-#: Тексты разделов: идентификатор → текст (клавиатура «К разделам FAQ»).
 FAQ_TEXTS: Final[dict[str, str]] = {
     "start": """🚀 Начало работы
 
@@ -385,4 +381,3 @@ def section_title(section_id: str) -> str:
         if known_id == section_id:
             return title
     return ""
-

@@ -25,10 +25,8 @@ from aiogram.types import Message
 
 import config
 
-#: Префиксы, с которых может начинаться команда.
 COMMAND_PREFIXES: Final[tuple[str, ...]] = (".", "/", "!")
 
-#: Команды, которые и без префикса считаются командами, а не активностью.
 KNOWN_COMMANDS: Final[frozenset[str]] = frozenset(
     set(config.MODERATION_COMMANDS)
     | set(config.CALL_COMMANDS)
@@ -111,7 +109,6 @@ class FlexCommand(BaseFilter):
     :param commands: имена команд (регистр не важен).
     """
 
-    #: Префиксы команды.
     PREFIXES: Final[tuple[str, ...]] = COMMAND_PREFIXES
 
     def __init__(self, *commands: str) -> None:
@@ -141,7 +138,6 @@ class RPCommand(BaseFilter):
     :param commands_dict: словарь известных RP-команд.
     """
 
-    #: Префиксы команды.
     PREFIXES: Final[tuple[str, ...]] = COMMAND_PREFIXES
 
     def __init__(self, commands_dict: Mapping[str, Any]) -> None:

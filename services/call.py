@@ -41,7 +41,6 @@ from services import richtext, time_parser
 
 logger = logging.getLogger(__name__)
 
-#: Активные задачи отложенных вызовов: ключ → задача.
 _scheduled_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
@@ -60,7 +59,6 @@ def normalize_emoji(text: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     first = raw[0]
-    # Некоторые эмодзи состоят из символа + модификатора (например, ❤️).
     if len(raw) > 1 and raw[1] in ("\ufe0f", "\ufe0e"):
         return raw[:2]
     return first
@@ -267,7 +265,6 @@ async def send_call(
     settings = settings or await queries.get_chat_settings(db, chat_id)
     mention_admins = bool(settings.get("call_mention_admins", True))
 
-    # Кого нельзя упоминать: бот, владелец, автор вызова и (по настройке) админы.
     excluded = await permissions_service.get_mention_exclusions(
         bot,
         db,
@@ -278,8 +275,6 @@ async def send_call(
     mentions = await collect_mentions(bot, db, chat_id, settings, excluded=excluded)
     batches = split_batches(mentions) or [[]]
 
-    # Имя автора-админа (или владельца) публично не раскрываем: в шапке
-    # появится нейтральная подпись «Администрация».
     admin_ids = await permissions_service.get_chat_admin_ids(bot, chat_id)
     owner_id = await _owner_id_safe(bot, db, chat_id)
     hide_author = bool(author_id) and (
@@ -289,8 +284,6 @@ async def send_call(
     header = profile_service.build_call_header_text(author_name, author_id, neutral=hide_author)
     body_text = escape_text(text) if text else ""
 
-    # Текст владельца с форматированием и/или фото уходит отдельным сообщением,
-    # чтобы премиум-эмодзи и разметка не терялись в HTML-шапке вызова.
     if content is not None and content.has_content:
         if await richtext.send_content(bot, chat_id, content):
             body_text = ""
@@ -313,7 +306,7 @@ async def send_call(
         except TelegramAPIError as exc:
             logger.error("Не удалось отправить вызов в чат %s: %s", chat_id, exc)
             break
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Неожиданная ошибка вызова в чате %s", chat_id, exc_info=True)
             break
 
@@ -332,14 +325,11 @@ async def _owner_id_safe(bot: Bot, db: Database, chat_id: int) -> Optional[int]:
     """Владелец чата без исключений (внутренний помощник вызова)."""
     try:
         return await permissions_service.get_chat_owner_id(bot, db, chat_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось получить владельца чата %s", chat_id, exc_info=True)
         return None
 
 
-# ---------------------------------------------------------------------------
-# Отложенные вызовы
-# ---------------------------------------------------------------------------
 async def schedule_call(
     bot: Bot,
     db: Database,
@@ -438,7 +428,7 @@ async def _run_scheduled(
     except asyncio.CancelledError:
         logger.info("Отложенный вызов в чате %s отменён.", chat_id)
         raise
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Отложенный вызов в чате %s упал", chat_id, exc_info=True)
     finally:
         _scheduled_tasks.pop(key, None)
@@ -502,7 +492,7 @@ async def restore_scheduled(bot: Bot, db: Database) -> int:
     now = time.time()
     try:
         chat_ids = await queries.get_known_chat_ids(db)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Не удалось прочитать чаты для отложенных вызовов", exc_info=True)
         return 0
 
@@ -524,7 +514,7 @@ async def restore_scheduled(bot: Bot, db: Database) -> int:
 
             if len(alive) != len(scheduled):
                 await queries.update_chat_setting(db, chat_id, "call_scheduled", alive)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Ошибка восстановления вызовов чата %s", chat_id, exc_info=True)
 
     if restored:

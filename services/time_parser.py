@@ -19,10 +19,6 @@ from typing import Final, Optional, Sequence
 
 from config import MAX_PUNISH_TIME_SECONDS, MIN_PUNISH_TIME_SECONDS
 
-# ---------------------------------------------------------------------------
-# Единицы измерения
-# ---------------------------------------------------------------------------
-#: Слова-маркеры бессрочного наказания.
 PERMANENT_WORDS: Final[frozenset[str]] = frozenset(
     {
         "навсегда",
@@ -43,12 +39,9 @@ PERMANENT_WORDS: Final[frozenset[str]] = frozenset(
     }
 )
 
-#: Слова-маркеры, что срок не указан (эквивалент бессрочного наказания).
 NO_TIME_WORDS: Final[frozenset[str]] = frozenset({"нет", "none", "без", "не", "-"})
 
-#: Алиасы единиц измерения: название → количество секунд.
 _UNIT_ALIASES: Final[dict[str, int]] = {
-    # дни
     "дней": 86400,
     "дня": 86400,
     "день": 86400,
@@ -57,7 +50,6 @@ _UNIT_ALIASES: Final[dict[str, int]] = {
     "days": 86400,
     "day": 86400,
     "d": 86400,
-    # часы
     "часов": 3600,
     "часа": 3600,
     "час": 3600,
@@ -65,7 +57,6 @@ _UNIT_ALIASES: Final[dict[str, int]] = {
     "hours": 3600,
     "hour": 3600,
     "h": 3600,
-    # минуты
     "минут": 60,
     "минуты": 60,
     "минуту": 60,
@@ -76,7 +67,6 @@ _UNIT_ALIASES: Final[dict[str, int]] = {
     "mins": 60,
     "min": 60,
     "m": 60,
-    # секунды
     "секунд": 1,
     "секунды": 1,
     "секунду": 1,
@@ -89,12 +79,10 @@ _UNIT_ALIASES: Final[dict[str, int]] = {
     "s": 1,
 }
 
-#: Части регулярного выражения для единиц (сначала самые длинные названия).
 _UNIT_PATTERN: Final[str] = "|".join(
     re.escape(alias) for alias in sorted(_UNIT_ALIASES, key=len, reverse=True)
 )
 
-#: Основная регулярка: число + единица измерения (``1д``, ``30 m``, ``2 часа``).
 TIME_TOKEN_RE: Final[re.Pattern[str]] = re.compile(
     rf"(\d+)\s*({_UNIT_PATTERN})",
     re.IGNORECASE,
@@ -139,7 +127,6 @@ def parse_time_token(token: Optional[str]) -> Optional[int]:
     if is_permanent_word(raw):
         return None
     if raw.isdigit():
-        # Число без букв = минуты по умолчанию.
         minutes = int(raw)
         return minutes * 60 if minutes > 0 else None
 
@@ -150,9 +137,7 @@ def parse_time_token(token: Optional[str]) -> Optional[int]:
         gap = raw[position : match.start()].strip()
         if gap:
             if not gap.isdigit():
-                # Непонятный текст между обозначениями — значит это не время.
                 return None
-            # Число без букв = минуты по умолчанию («2ч30» → 2 часа 30 минут).
             total_seconds += int(gap) * 60
         position = match.end()
         value = int(match.group(1))
@@ -164,7 +149,6 @@ def parse_time_token(token: Optional[str]) -> Optional[int]:
     if tail:
         if not tail.isdigit():
             return None
-        # Хвост без единицы измерения — тоже минуты.
         total_seconds += int(tail) * 60
         matched = True
 
@@ -284,7 +268,5 @@ def extract_duration(tokens: Sequence[str]) -> tuple[Optional[int], bool, list[s
         seconds = parse_time_token(first)
         if seconds is not None:
             return seconds, True, remaining[1:]
-        # Похоже на срок, но разобрать не удалось — считаем это частью причины,
-        # чтобы случайно не выдать бессрочное наказание.
         return None, False, remaining
     return None, False, remaining

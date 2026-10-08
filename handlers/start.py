@@ -25,10 +25,8 @@ from utils import error_handler
 
 logger = logging.getLogger(__name__)
 
-#: Роутер личных сообщений.
 router: Final[Router] = Router(name="start")
 
-#: Текст-подсказка для прочих сообщений в личке.
 PRIVATE_HINT: Final[str] = (
     "Я понимаю только команды в чате~ 🌸\n"
     "Открой меню командой /start или добавь меня в свой чат!"
@@ -53,11 +51,11 @@ async def _show_main_menu(message: Message, db: Database) -> None:
                 message.from_user.username,
                 message.from_user.first_name,
             )
-        except Exception as exc:  # noqa: BLE001 - профиль не критичен для ответа
+        except Exception as exc:
             error_handler.log_exception("создании профиля из /start", exc)
         try:
             guarded = await antiraid_service.active_protection_chats(db, message.from_user.id)
-        except Exception as exc:  # noqa: BLE001 - меню важнее списка защиты
+        except Exception as exc:
             error_handler.log_exception("поиске чатов под защитой", exc)
 
     await message.answer(
@@ -91,11 +89,11 @@ async def cmd_start(message: Message, db: Database, bot: Bot) -> None:
             )
             if linked:
                 logger.info("Пользователь %s связан с %s чатами: %s", user.id, len(linked), linked)
-        except Exception as exc:  # noqa: BLE001 - меню важнее синхронизации
+        except Exception as exc:
             error_handler.log_exception("синхронизации чатов пользователя", exc)
     try:
         await _show_main_menu(message, db)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отправке главного меню", exc)
         await error_handler.notify_user_softly(message)
 
@@ -108,7 +106,7 @@ async def cmd_help(message: Message, db: Database) -> None:
             profile_service.build_capabilities_text(),
             reply_markup=inline.back_to_menu_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("отправке справки", exc)
         await error_handler.notify_user_softly(message)
 
@@ -121,5 +119,5 @@ async def private_fallback(message: Message) -> None:
             PRIVATE_HINT,
             reply_markup=inline.back_to_menu_keyboard(),
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("ответе в личке", exc)

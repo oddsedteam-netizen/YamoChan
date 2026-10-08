@@ -36,7 +36,6 @@ from services import admin as admin_service, profile as profile_service
 
 logger = logging.getLogger(__name__)
 
-#: Заголовок карточки жалобы для владельца бота.
 COMPLAINT_CARD_TITLE: Final[str] = "📩 Новая жалоба"
 
 
@@ -67,9 +66,6 @@ def preview_of(description: str, length: int = config.COMPLAINT_PREVIEW_LENGTH) 
     return single_line[:length] + "…"
 
 
-# ---------------------------------------------------------------------------
-# Пользовательский сценарий
-# ---------------------------------------------------------------------------
 def build_intro_text() -> str:
     """Шаг 1 — текст экрана «Подача жалобы» (выбор категории)."""
     return "📩 Подача жалобы\n\nВыбери категорию жалобы:"
@@ -129,9 +125,6 @@ def build_cancelled_text() -> str:
     return "Хорошо, жалоба отменена~ 🌸"
 
 
-# ---------------------------------------------------------------------------
-# Админский сценарий: раздел, списки и карточки
-# ---------------------------------------------------------------------------
 def build_section_text(stats: dict[str, int]) -> str:
     """Текст раздела «Жалобы» со статистикой по статусам.
 
@@ -249,9 +242,6 @@ def build_card_text(complaint: Complaint, *, decision: str = "") -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Уведомление владельцу и ответы автору
-# ---------------------------------------------------------------------------
 def build_owner_notification_text(
     complaint: Complaint,
     reputation: int,
@@ -361,9 +351,6 @@ def build_reply_notice_text(complaint_id: int, text: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Действия
-# ---------------------------------------------------------------------------
 async def submit_complaint(
     db: Database,
     *,
@@ -444,7 +431,7 @@ async def send_rich_text(
         return True
     except TelegramAPIError as exc:
         logger.info("Не удалось отправить сообщение в %s: %s", chat_id, exc)
-    except Exception:  # noqa: BLE001 - отправка не должна ронять бота
+    except Exception:
         logger.error("Неожиданная ошибка отправки жалобы", exc_info=True)
     return False
 
@@ -479,7 +466,7 @@ async def notify_owner(
     try:
         pairs = await queries.get_user_chats(db, complaint.user_id)
         chat_titles = [chat.display_title for chat, _ in pairs]
-    except Exception:  # noqa: BLE001 - список чатов не критичен
+    except Exception:
         logger.error("Не удалось получить чаты автора жалобы", exc_info=True)
 
     text = build_owner_notification_text(complaint, reputation, chat_titles, stats)
@@ -509,7 +496,7 @@ async def notify_author_decision(bot: Bot, complaint: Complaint) -> bool:
         return True
     except TelegramAPIError as exc:
         logger.info("Автор жалобы #%s недоступен: %s", complaint.id, exc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка уведомления автора жалобы", exc_info=True)
     return False
 

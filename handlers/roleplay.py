@@ -36,13 +36,10 @@ from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер ролевых команд.
 router: Final[Router] = Router(name="roleplay")
 
-#: Групповые типы чатов, где работают RP-команды.
 GROUP_CHAT_TYPES: Final[set[str]] = {ChatType.GROUP, ChatType.SUPERGROUP}
 
-#: Обычные ролевые команды: ``команда → (эмодзи, действие)``.
 NORMAL_RP_COMMANDS: dict[str, tuple[str, str]] = {
     "обнять": ("🤗", "обнял(а)"),
     "погладить": ("🥰", "погладил(а)"),
@@ -96,7 +93,6 @@ NORMAL_RP_COMMANDS: dict[str, tuple[str, str]] = {
     "ущипнуть": ("🤏", "ущипнул(а)"),
 }
 
-#: 18+ ролевые команды: включаются настройкой ``nsfw_commands``.
 NSFW_RP_COMMANDS: dict[str, tuple[str, str]] = {
     "трахнуть": ("🔞", "трахнул(а)"),
     "отсосать": ("🔞", "отсосал(а) у"),
@@ -120,25 +116,18 @@ NSFW_RP_COMMANDS: dict[str, tuple[str, str]] = {
     "сквирт": ("🔞", "довёл(а) до сквирта"),
 }
 
-#: Все RP-команды вместе (для фильтра и проверок коллизий).
 RP_COMMANDS: Final[dict[str, tuple[str, str]]] = {
     **NORMAL_RP_COMMANDS,
     **NSFW_RP_COMMANDS,
 }
 
-#: Цель не указана вовсе.
 NO_TARGET_TEXT: Final[str] = "А кого?~ 🤔"
-#: Цель указана, но пользователя нет в базе бота.
 UNKNOWN_TARGET_TEXT: Final[str] = "Не могу найти этого пользователя~ 🤔"
-#: 18+ команды выключены для этого чата.
 NSFW_DISABLED_TEXT: Final[str] = (
     "🔞 18+ команды отключены в этом чате~ Попроси владельца включить в настройках!"
 )
 
 
-# ---------------------------------------------------------------------------
-# Разбор команды
-# ---------------------------------------------------------------------------
 @dataclass(slots=True)
 class ParsedRoleplay:
     """Разобранная RP-команда."""
@@ -187,9 +176,6 @@ class RoleplayFilter(BaseFilter):
         return {"command": parsed}
 
 
-# ---------------------------------------------------------------------------
-# Цель и текст действия
-# ---------------------------------------------------------------------------
 def _user_name(user: Any) -> str:
     """Имя пользователя из Telegram (для отправителя)."""
     return getattr(user, "full_name", None) or getattr(user, "username", None) or str(user.id)
@@ -255,9 +241,6 @@ def build_action_text(
     return f"{emoji} {sender_link} {action} {target_link}~"
 
 
-# ---------------------------------------------------------------------------
-# Обработчик команд
-# ---------------------------------------------------------------------------
 @router.message(F.chat.type.in_(GROUP_CHAT_TYPES), RoleplayFilter())
 async def handle_roleplay(
     message: Message,
@@ -279,7 +262,6 @@ async def handle_roleplay(
         sender_profile = await queries.get_user(db, sender.id)
         sender_name = _profile_name(sender_profile, _user_name(sender))
 
-        # 18+ команды доступны только при включённой настройке чата.
         if command.name in NSFW_RP_COMMANDS:
             settings = await queries.get_chat_settings(db, message.chat.id)
             if not settings.get("nsfw_commands"):
@@ -303,14 +285,11 @@ async def handle_roleplay(
             target[0],
             message.chat.id,
         )
-    except Exception as exc:  # noqa: BLE001 - бот не должен падать
+    except Exception as exc:
         error_handler.log_exception(f"RP-команде «.{command.name}»", exc)
         await error_handler.notify_user_softly(message)
 
 
-# ---------------------------------------------------------------------------
-# Настройка 18+ команд (кнопка «🔞 18+ команды» в настройках чата)
-# ---------------------------------------------------------------------------
 def _chat_id_from(raw: Optional[str]) -> int:
     """Разобрать идентификатор чата из ``callback_data``."""
     cleaned = (raw or "").strip()
@@ -342,12 +321,12 @@ async def _render(callback: CallbackQuery, text: str, markup=None) -> None:
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана 18+ команд", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана 18+ команд", exc)
 
 
@@ -429,6 +408,6 @@ async def on_nsfw_callbacks(callback: CallbackQuery, db: Database, bot: Bot) -> 
             return
 
         await _show_nsfw_menu(callback, db, enabled)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("настройке 18+ команд", exc)
         await error_handler.notify_user_softly(callback)

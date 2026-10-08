@@ -24,7 +24,6 @@ import re
 from html import escape as _html_escape
 from typing import Any, Final
 
-#: Теги, которые понимает HTML-разметка Telegram Bot API.
 SUPPORTED_TAGS: Final[tuple[str, ...]] = (
     "b",
     "i",
@@ -41,20 +40,16 @@ SUPPORTED_TAGS: Final[tuple[str, ...]] = (
     "span",
 )
 
-#: Начало корректного тега: ``<b>``, ``</b>``, ``<a href="…"``.
-#: Проверяется только имя тега, дальше идёт ``>``, ``/`` или пробел.
 _VALID_TAG_START: Final[re.Pattern[str]] = re.compile(
     r"</?(?:" + "|".join(SUPPORTED_TAGS) + r")(?=[\s/>])",
     re.IGNORECASE,
 )
 
-#: Полностью корректный тег вместе с атрибутами — для :func:`plain_text`.
 _FULL_TAG: Final[re.Pattern[str]] = re.compile(
     r"</?(?:" + "|".join(SUPPORTED_TAGS) + r")(?:\s[^<>]*)?/?>",
     re.IGNORECASE,
 )
 
-#: Признаки того, что Telegram не смог разобрать разметку сообщения.
 _PARSE_ERROR_MARKERS: Final[tuple[str, ...]] = (
     "can't parse entities",
     "can't parse entity",

@@ -27,9 +27,6 @@ from utils import error_handler
 
 logger = logging.getLogger(__name__)
 
-#: Фабрика задачи: создаёт корутину в момент реальной обработки.
-#: Ленивая форма нужна, чтобы параметры (settings, member) не копились
-#: в памяти раньше времени и не создавались «мёртвые» корутины.
 JobFactory = Callable[[], Awaitable[None]]
 
 
@@ -41,7 +38,6 @@ class JoinQueue:
         self._queues: dict[int, deque[JobFactory]] = {}
         self._workers: dict[int, asyncio.Task[Any]] = {}
         self._total = 0
-        #: Счётчики для статистики.
         self.enqueued = 0
         self.processed = 0
         self.rejected = 0
@@ -60,9 +56,6 @@ class JoinQueue:
             len(queue) >= config.JOIN_QUEUE_MAX_PER_CHAT
             or self._total > config.JOIN_QUEUE_MAX_TOTAL
         ):
-            # Переполнение — событие критичное, логируем ERROR: без этого
-            # «потерянные» входы были бы невидимы. Отклоняем именно новую
-            # задачу, накопленное обрабатываем.
             self._total -= 1
             self.rejected += 1
             logger.error(
@@ -104,16 +97,13 @@ class JoinQueue:
                     self.processed += 1
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # noqa: BLE001 - воркер не должен умирать
+                except Exception as exc:
                     error_handler.log_exception(
                         f"обработке входа в чате {chat_id}", exc
                     )
                 if queue and interval:
-                    # Пауза только между задачами: всплеск входов не должен
-                    # выстреливать в лог 429-ами.
                     await asyncio.sleep(interval)
         finally:
-            # Воркер завершён — убираем себя из реестра.
             current = self._workers.get(chat_id)
             if current is not None and current is asyncio.current_task():
                 self._workers.pop(chat_id, None)
@@ -153,5 +143,4 @@ class JoinQueue:
         return self._total
 
 
-#: Глобальная очередь входов проекта.
 join_queue: Final[JoinQueue] = JoinQueue()

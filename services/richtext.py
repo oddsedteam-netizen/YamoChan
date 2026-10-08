@@ -46,16 +46,12 @@ from utils import error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Тип сущности премиум-эмодзи в Bot API.
 CUSTOM_EMOJI_TYPE: str = "custom_emoji"
 
-#: Тип сущности «упоминание по id» (``tg://user?id=…``).
 TEXT_MENTION_TYPE: str = "text_mention"
 
-#: Тип сущности «сворачиваемая цитата» — правила при входе.
 EXPANDABLE_BLOCKQUOTE_TYPE: str = "expandable_blockquote"
 
-#: Поля сущности, которые сохраняем в настройках чата.
 ENTITY_FIELDS: tuple[str, ...] = (
     "type",
     "offset",
@@ -150,14 +146,11 @@ def entities_from_json(raw: Optional[Iterable[Any]]) -> list[MessageEntity]:
             continue
         try:
             result.append(MessageEntity(**dict(item)))
-        except Exception:  # noqa: BLE001 - форматирование не важнее текста
+        except Exception:
             logger.debug("Пропущена некорректная сущность: %r", item)
     return result
 
 
-# ---------------------------------------------------------------------------
-# Спец-подстановки: {name}, {id}, {mention}, {chat}, {count}
-# ---------------------------------------------------------------------------
 def escape_html(text: str) -> str:
     """Экранировать спец-символы HTML в данных пользователя.
 
@@ -266,9 +259,8 @@ def _remap_entity_offsets(
         if token_start >= end:
             break
         if int(offset) <= token_start and end >= token_end:
-            new_length += delta  # сущность покрывает замену целиком
+            new_length += delta
         elif int(offset) > token_start and end < token_end:
-            # Сущность оказалась внутри спец-команды — прижимаем её к замене.
             new_length = max(1, replacement_length)
     return new_offset, max(1, new_length)
 
@@ -347,9 +339,6 @@ def substitute_placeholders(
     return new_text, updated
 
 
-# ---------------------------------------------------------------------------
-# Сохранение и сборка содержимого
-# ---------------------------------------------------------------------------
 def largest_photo(photos: Optional[Sequence[PhotoSize]]) -> Optional[str]:
     """``file_id`` самого крупного фото из сообщения."""
     if not photos:
@@ -569,7 +558,6 @@ def build_quoted_content(content: RichContent) -> RichContent:
             "length": utf16_length(content.text),
         }
     )
-    # Внешняя сущность (цитата) идёт первой, вложенное форматирование — за ней.
     entities.sort(key=lambda item: (int(item.get("offset") or 0), -int(item.get("length") or 0)))
     return RichContent(text=content.text, entities=entities, photo=None)
 
@@ -647,9 +635,6 @@ def content_preview(content: RichContent, limit: int = 180) -> str:
     return " · ".join(parts) if parts else "пока пусто"
 
 
-# ---------------------------------------------------------------------------
-# Инлайн-кнопки приветствия (сохранённое содержимое)
-# ---------------------------------------------------------------------------
 def normalize_button_text(raw: str) -> Optional[str]:
     """Нормализовать подпись кнопки: одна строка и лимит Telegram.
 
@@ -745,9 +730,6 @@ def saved_buttons_markup(buttons: Any) -> Optional[InlineKeyboardMarkup]:
     return builder.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Отправка
-# ---------------------------------------------------------------------------
 async def _send_once(
     bot: Bot,
     chat_id: int,
@@ -814,11 +796,9 @@ async def send_content(
     entities = stored or None
     attempts_list: list[tuple[Optional[list[MessageEntity]], Optional[ParseMode]]] = []
     if entities:
-        # Сначала как есть (с премиум-эмодзи), затем — без форматирования.
         attempts_list.append((entities, None))
         attempts_list.append((None, None))
     elif html_fallback:
-        # Текст владельца мог быть набран с HTML-разметкой вручную.
         attempts_list.append((None, ParseMode.HTML))
         attempts_list.append((None, None))
     else:
@@ -826,8 +806,6 @@ async def send_content(
 
     for index, (entities_attempt, parse_mode) in enumerate(attempts_list):
         try:
-            # Повторы при флуд-контроле/сети: одна попытка = до 5 реальных
-            # запросов с ожиданием retry_after от Telegram.
             await telegram.call_with_retry(
                 lambda entities_attempt=entities_attempt, parse_mode=parse_mode: (
                     _send_once(
@@ -850,15 +828,12 @@ async def send_content(
                 )
             return True
         except TelegramAPIError as exc:
-            # Все повторы исчерпаны либо ошибка неповторяемая (права,
-            # разметка) — логируем по-человечески и пробуем следующий вариант.
             error_handler.log_telegram_error(
                 f"отправка содержимого в {chat_id} (вариант {index + 1})",
                 exc,
                 level=logging.WARNING,
             )
             if isinstance(exc, TelegramForbiddenError):
-                # Нет доступа в чат — повторные варианты тоже бесполезны.
                 logger.error(
                     "Содержимое в %s не отправлено: бот не имеет доступа "
                     "(кикнут или нет прав). Ошибка: %s",
@@ -866,12 +841,10 @@ async def send_content(
                     exc,
                 )
                 return False
-        except Exception:  # noqa: BLE001 - отправка не должна ронять бота
+        except Exception:
             logger.error("Неожиданная ошибка отправки в %s", chat_id, exc_info=True)
             return False
 
-    # Последняя попытка: если фото не принято, возможно, «протух» его file_id
-    # (бывает редко) — тогда отправляем только текст, чтобы сообщение не потерялось.
     if content.photo:
         logger.warning(
             "Фото «%s» в чат %s не принято — отправляю текст без фото.",
@@ -897,7 +870,7 @@ async def send_content(
             error_handler.log_telegram_error(
                 f"отправка текста без фото в {chat_id}", exc
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.error("Неожиданная ошибка отправки текста в %s", chat_id, exc_info=True)
 
     logger.error("Содержимое в %s не отправлено ни в одном варианте.", chat_id)
@@ -928,13 +901,13 @@ async def edit_content(
         return True
     except TelegramAPIError as exc:
         logger.warning("Не удалось изменить сообщение %s: %s", message.message_id, exc)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.error("Неожиданная ошибка редактирования сообщения", exc_info=True)
     if message.caption is not None:
         return False
     try:
         await message.edit_text(content.text or "…", reply_markup=reply_markup)
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("Повторное редактирование не сработало: %s", exc)
     return False

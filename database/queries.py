@@ -30,9 +30,6 @@ from database.models import (
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Пользователи (users)
-# ---------------------------------------------------------------------------
 async def ensure_user(
     db: Database,
     user_id: int,
@@ -54,7 +51,7 @@ async def ensure_user(
         (user_id, username, first_name, to_iso(utcnow())),
     )
     profile = await get_user(db, user_id)
-    if profile is None:  # pragma: no cover - защита от неожиданной гонки
+    if profile is None:
         profile = UserProfile(user_id=user_id, username=username, first_name=first_name)
     return profile
 
@@ -149,9 +146,6 @@ async def remove_ban_mark(db: Database, user_id: int, chat_id: int) -> list[int]
     return marks
 
 
-# ---------------------------------------------------------------------------
-# Чаты (chats)
-# ---------------------------------------------------------------------------
 async def ensure_chat(
     db: Database,
     chat_id: int,
@@ -179,7 +173,7 @@ async def ensure_chat(
         ),
     )
     chat = await get_chat(db, chat_id)
-    if chat is None:  # pragma: no cover - защита от неожиданной гонки
+    if chat is None:
         chat = ChatInfo(chat_id=chat_id, title=title, settings=dict(config.DEFAULT_CHAT_SETTINGS))
     return chat
 
@@ -228,11 +222,9 @@ async def get_chat_settings(db: Database, chat_id: int) -> dict[str, Any]:
     stored = chat.settings if chat is not None else {}
     if stored:
         settings.update(stored)
-    # Совместимость: старые чаты хранили только ключ "antiraid".
     if "antiraid_enabled" not in (stored or {}):
         settings["antiraid_enabled"] = bool(settings.get("antiraid"))
     settings["antiraid"] = bool(settings.get("antiraid_enabled"))
-    # Совместимость: прежний ключ call_mode → call_enabled.
     if "call_enabled" not in (stored or {}):
         settings["call_enabled"] = bool(settings.get("call_mode"))
     settings["call_mode"] = bool(settings.get("call_enabled"))
@@ -243,8 +235,6 @@ async def get_chat_settings(db: Database, chat_id: int) -> dict[str, Any]:
             if command in commands:
                 commands[command] = bool(enabled)
     settings["commands"] = commands
-    # Отключённые для админов команды: держим список и старый словарь
-    # ``commands`` согласованными (``False`` в словаре = команда выключена).
     disabled = normalize_disabled_commands(settings.get(config.DISABLED_MOD_COMMANDS_KEY))
     disabled |= {command for command, enabled in commands.items() if not enabled}
     settings[config.DISABLED_MOD_COMMANDS_KEY] = sorted(disabled)
@@ -350,9 +340,6 @@ async def set_disabled_mod_command(
     return settings
 
 
-# ---------------------------------------------------------------------------
-# Участники чатов (chat_users)
-# ---------------------------------------------------------------------------
 async def ensure_chat_user(db: Database, chat_id: int, user_id: int) -> ChatUser:
     """Создать связку «чат — пользователь», если её ещё нет."""
     await db.execute(
@@ -364,7 +351,7 @@ async def ensure_chat_user(db: Database, chat_id: int, user_id: int) -> ChatUser
         (chat_id, user_id, to_iso(utcnow()), to_iso(utcnow())),
     )
     chat_user = await get_chat_user(db, chat_id, user_id)
-    if chat_user is None:  # pragma: no cover - защита от неожиданной гонки
+    if chat_user is None:
         chat_user = ChatUser(chat_id=chat_id, user_id=user_id)
     return chat_user
 
@@ -568,9 +555,6 @@ async def set_user_muted(
     )
 
 
-# ---------------------------------------------------------------------------
-# Предупреждения (warns)
-# ---------------------------------------------------------------------------
 async def add_warn(
     db: Database,
     chat_id: int,
@@ -654,9 +638,6 @@ async def get_user_warns_by_chat(db: Database, user_id: int) -> list[tuple[int, 
     return [(int(row["chat_id"]), int(row["cnt"])) for row in rows]
 
 
-# ---------------------------------------------------------------------------
-# Наказания (punishments)
-# ---------------------------------------------------------------------------
 async def add_punishment(
     db: Database,
     chat_id: int,
@@ -827,9 +808,6 @@ async def get_expired_punishments(db: Database, limit: int = 50) -> list[Punishm
     return [Punishment.from_row(row) for row in rows]
 
 
-# ---------------------------------------------------------------------------
-# Статистика и активность
-# ---------------------------------------------------------------------------
 async def log_message(db: Database, chat_id: int, user_id: int) -> None:
     """Записать сообщение в журнал активности (для подсчёта за сутки)."""
     await db.execute(
@@ -885,7 +863,6 @@ async def get_chat_stats(db: Database, chat_id: int) -> dict[str, int]:
     }
 
 
-#: Столбцы локальной статистики участника, подмешиваемые к выборке чатов.
 _CHAT_USER_STATS_SQL: Final[str] = """
                cu.messages_count   AS cu_messages,
                cu.warns_count      AS cu_warns,
@@ -915,7 +892,6 @@ def _chat_pair_from_row(
         warns_count=int(row["cu_warns"] or 0),
         is_banned=bool(row["cu_banned"]),
         is_muted=bool(row["cu_muted"]),
-        # Владелец может быть в чате без записи в chat_users — считаем его участником.
         is_member=bool(row["cu_is_member"]) if has_stats else True,
         joined_at=models.from_iso(row["cu_joined"]),
         last_message_at=models.from_iso(row["cu_last_message"]),
@@ -961,7 +937,7 @@ async def get_user_chats(db: Database, user_id: int) -> list[tuple[ChatInfo, Cha
     seen: set[int] = set()
     for row in (*owner_rows, *member_rows):
         chat_id = int(row["chat_id"])
-        if chat_id in seen:  # страховка от дубликатов «владелец + участник»
+        if chat_id in seen:
             continue
         seen.add(chat_id)
         result.append(_chat_pair_from_row(row, user_id))
@@ -1075,9 +1051,6 @@ async def count_active_punishments_global(db: Database, user_id: int) -> int:
     )
     return int(value)
 
-# ---------------------------------------------------------------------------
-# Антирейд
-# ---------------------------------------------------------------------------
 async def count_recent_joins(db: Database, chat_id: int, since: datetime) -> int:
     """Сколько участников присоединилось к чату с указанного момента.
 
@@ -1108,9 +1081,6 @@ async def mark_joined(db: Database, chat_id: int, user_id: int) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Жалобы пользователей (complaints)
-# ---------------------------------------------------------------------------
 async def create_complaint(
     db: Database,
     user_id: int,
@@ -1264,9 +1234,6 @@ async def close_complaint(
     return True
 
 
-# ---------------------------------------------------------------------------
-# Баны от владельца бота (admin_bans)
-# ---------------------------------------------------------------------------
 async def add_admin_ban(
     db: Database,
     user_id: int,
@@ -1336,9 +1303,6 @@ async def count_admin_bans(db: Database) -> int:
     return int(value)
 
 
-# ---------------------------------------------------------------------------
-# Журнал действий владельца бота (admin_log)
-# ---------------------------------------------------------------------------
 async def log_admin_action(
     db: Database,
     action: str,
@@ -1357,7 +1321,7 @@ async def log_admin_action(
             "INSERT INTO admin_log (action, target_id, details, created_at) VALUES (?, ?, ?, ?)",
             (str(action), target_id, details, to_iso(utcnow())),
         )
-    except Exception:  # noqa: BLE001 - журнал не должен ломать само действие
+    except Exception:
         logger.error("Не удалось записать действие %r в журнал админа", action, exc_info=True)
 
 
@@ -1383,9 +1347,6 @@ async def count_admin_log(db: Database) -> int:
     return int(value)
 
 
-# ---------------------------------------------------------------------------
-# Списки и отвязка чатов для админ-панели
-# ---------------------------------------------------------------------------
 def _user_filter_sql(
     *,
     max_reputation: Optional[int] = None,
@@ -1518,9 +1479,6 @@ async def detach_chat(db: Database, chat_id: int) -> None:
     logger.info("Чат %s отвязан от бота (данные чата удалены).", chat_id)
 
 
-# ---------------------------------------------------------------------------
-# Глобальная статистика админ-панели
-# ---------------------------------------------------------------------------
 async def get_global_stats(db: Database) -> dict[str, int]:
     """Собрать сводную статистику бота для главного экрана админ-панели."""
     total_users = int(await db.fetch_value("SELECT COUNT(*) FROM users"))
@@ -1626,9 +1584,6 @@ async def get_daily_message_counts(db: Database, since: datetime) -> dict[str, i
     return {str(row["day"]): int(row["cnt"]) for row in rows}
 
 
-# ---------------------------------------------------------------------------
-# Быстрые действия админ-панели
-# ---------------------------------------------------------------------------
 async def cleanup_admin_log(db: Database, keep_days: int = config.ADMIN_LOG_TTL_DAYS) -> int:
     """Удалить старые записи журнала админа.
 

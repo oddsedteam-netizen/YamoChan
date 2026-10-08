@@ -12,23 +12,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Final, Mapping, Optional, Sequence
 
-#: Модуль экранирования — чистый (только stdlib), поэтому models остаётся
-#: автономным: см. комментарий про UTC ниже.
 from utils import html_utils
 
-#: Часовой пояс проекта (дублируется из config, чтобы models оставался автономным).
 UTC: Final[timezone] = timezone.utc
 
-#: Пустой список меток банов в виде JSON.
 EMPTY_MARKS: Final[str] = "[]"
 
-#: Пустые настройки чата в виде JSON.
 EMPTY_SETTINGS: Final[str] = "{}"
 
 
-# ---------------------------------------------------------------------------
-# Работа со временем и JSON
-# ---------------------------------------------------------------------------
 def utcnow() -> datetime:
     """Вернуть текущее время в UTC (timezone-aware)."""
     return datetime.now(tz=UTC)
@@ -113,7 +105,6 @@ def load_json_dict(raw: Any) -> dict[str, Any]:
     return _load_json_dict(raw)
 
 
-
 def _escape(text: str) -> str:
     """Экранировать спецсимволы HTML для безопасной отправки сообщений."""
     return html_utils.h(text)
@@ -140,10 +131,6 @@ def flag(row: Mapping[str, Any], name: str, default: bool = False) -> bool:
         return default
 
 
-
-# ---------------------------------------------------------------------------
-# Модели
-# ---------------------------------------------------------------------------
 @dataclass(slots=True)
 class UserProfile:
     """Глобальный профиль пользователя (таблица ``users``)."""
@@ -228,7 +215,6 @@ class ChatInfo:
             members_count=int(row["members_count"] or 0),
             created_at=from_iso(row["created_at"]),
         )
-
 
 
 @dataclass(slots=True)
@@ -390,9 +376,6 @@ class Mute:
         )
 
 
-# ---------------------------------------------------------------------------
-# Админ-панель владельца бота
-# ---------------------------------------------------------------------------
 @dataclass(slots=True)
 class Complaint:
     """Жалоба пользователя (таблица ``complaints``).
@@ -493,5 +476,3 @@ class AdminLogEntry:
             details=row["details"],
             created_at=from_iso(row["created_at"]),
         )
-
-

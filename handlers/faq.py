@@ -27,7 +27,6 @@ from utils import error_handler, faq_texts, html_utils, telegram
 
 logger = logging.getLogger(__name__)
 
-#: Роутер FAQ.
 router: Final[Router] = Router(name="faq")
 
 
@@ -57,12 +56,12 @@ async def _render(
                     html_utils.safe_html_text(text),
                     reply_markup=markup,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error_handler.log_exception("отправке экрана FAQ", exc)
         return
     try:
         await telegram.render_screen(message, text, markup)
-    except Exception as exc:  # noqa: BLE001 - экран не важнее работы бота
+    except Exception as exc:
         error_handler.log_exception("обновлении экрана FAQ", exc)
 
 
@@ -76,7 +75,7 @@ async def faq_main(callback: CallbackQuery) -> None:
             inline.faq_main_keyboard(),
         )
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("показе главного экрана FAQ", exc)
         await error_handler.notify_user_softly(callback)
 
@@ -97,6 +96,6 @@ async def faq_section(callback: CallbackQuery) -> None:
             return
         await _render(callback, text, inline.faq_section_keyboard())
         await callback.answer()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         error_handler.log_exception("показе раздела FAQ", exc)
         await error_handler.notify_user_softly(callback)
