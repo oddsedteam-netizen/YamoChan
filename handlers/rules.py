@@ -969,7 +969,7 @@ async def handle_greeting_command(message: Message, db: Database, bot: Bot) -> N
         if user is None:
             return
         chat_id = message.chat.id
-        if not await permissions.is_chat_administrator(bot, chat_id, user.id):
+        if not await permissions.is_admin_or_anon(bot, chat_id, user.id, message):
             await message.reply(config.NOT_ADMIN_MESSAGE)
             return
 

@@ -429,7 +429,9 @@ async def unknown_command(message: Message, bot: Bot) -> None:
         author_id = message.from_user.id if message.from_user else 0
         if not author_id:
             return
-        if not await permissions.is_chat_administrator(bot, message.chat.id, author_id):
+        if not await permissions.is_admin_or_anon(
+            bot, message.chat.id, author_id, message
+        ):
             return
         await message.reply(
             f"Команды «.{parsed.name}» я не знаю~ 🤔\n"

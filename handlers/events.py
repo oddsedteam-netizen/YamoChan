@@ -242,13 +242,19 @@ class MessageCounterMiddleware(BaseMiddleware):
         ):
             return
 
-        if await self._is_privileged(bot, chat.id, author.id):
+        if await self._is_privileged(bot, chat.id, author.id, message):
             antiraid_service.antiraid_manager.forget_messages(chat.id, author.id)
             return
         await self._punish_spammer(bot, chat.id, author, settings)
 
-    async def _is_privileged(self, bot: Bot, chat_id: int, user_id: int) -> bool:
-        """Владелец, админ или супер-админ — спамом не считаем."""
+    async def _is_privileged(
+        self,
+        bot: Bot,
+        chat_id: int,
+        user_id: int,
+        message: Optional[Message] = None,
+    ) -> bool:
+        """Владелец, админ, анонимный админ или супер-админ — спамом не считаем."""
         if user_id in config.SUPERADMIN_IDS:
             return True
         try:
@@ -257,7 +263,7 @@ class MessageCounterMiddleware(BaseMiddleware):
             chat = None
         if chat is not None and chat.owner_id == user_id:
             return True
-        return await permissions.is_chat_administrator(bot, chat_id, user_id)
+        return await permissions.is_admin_or_anon(bot, chat_id, user_id, message)
 
     async def _punish_spammer(
         self,

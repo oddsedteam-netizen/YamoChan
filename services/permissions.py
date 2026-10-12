@@ -512,6 +512,14 @@ async def check_moderation_rights(bot: Bot, message: Message) -> ModerationRight
             reason="канал не является администратором чата",
         )
 
+    if from_user is not None and from_user.id == GROUP_ANONYMOUS_BOT_ID:
+        return ModerationRights(
+            allowed=True,
+            actor_id=None,
+            actor_label="анонимный админ чата",
+            is_anonymous=True,
+        )
+
     if from_user is None or from_user.is_bot:
         return ModerationRights(
             allowed=False,

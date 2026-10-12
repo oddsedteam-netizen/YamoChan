@@ -105,7 +105,7 @@ async def cmd_diagnostics(message: Message, db: Database, bot: Bot) -> None:
         return
 
     try:
-        if not await permissions.is_chat_administrator(bot, chat_id, user.id):
+        if not await permissions.is_admin_or_anon(bot, chat_id, user.id, message):
             await message.reply(profile_service.build_diagnostics_not_admin_text())
             return
 

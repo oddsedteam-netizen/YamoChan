@@ -27,7 +27,7 @@ load_dotenv(dotenv_path=LOCAL_ENV_FILE, override=True)
 
 BOT_TOKEN: Final[str] = os.getenv("BOT_TOKEN", "").strip()
 BOT_NAME: Final[str] = "YamoChan"
-BOT_VERSION: Final[str] = "1.2.0"
+BOT_VERSION: Final[str] = "1.2.1"
 
 DB_PATH: Final[Path] = Path(
     os.getenv("DB_PATH", str(BASE_DIR / "data" / "yamochan.db"))
