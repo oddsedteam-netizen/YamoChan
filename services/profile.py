@@ -20,7 +20,7 @@ from database.models import (
     escape_text,
     utcnow,
 )
-from services import richtext, time_parser
+from services import quiet_hours as quiet_hours_service, richtext, time_parser
 
 REPUTATION_EMOJI: tuple[str, ...] = ("🔴", "🟠", "🟡", "🟢", "⚪")
 
@@ -326,6 +326,16 @@ def build_settings_text(chat: ChatInfo, settings: dict[str, object]) -> str:
     enabled_commands = sum(
         1 for value in (settings.get("commands") or {}).values() if bool(value)
     )
+    quiet_enabled = bool(settings.get(config.QUIET_HOURS_ENABLED_KEY))
+    quiet_start = str(settings.get(config.QUIET_HOURS_START_KEY) or config.QUIET_HOURS_DEFAULT_START)
+    quiet_end = str(settings.get(config.QUIET_HOURS_END_KEY) or config.QUIET_HOURS_DEFAULT_END)
+    custom_rp = settings.get(config.CUSTOM_RP_COMMANDS_KEY)
+    custom_rp_count = len(custom_rp) if isinstance(custom_rp, (list, tuple)) else 0
+    quiet_line = (
+        f"✅ ВКЛ ({quiet_start}–{quiet_end}, {config.MSK_LABEL})"
+        if quiet_enabled
+        else "❌ ВЫКЛ"
+    )
     return (
         f"⚙️ Настройки бота для <b>{escape_text(chat.display_title)}</b>\n\n"
         f"🔞 18+ команды: {mark(settings.get('nsfw_commands'))}\n"
@@ -336,6 +346,8 @@ def build_settings_text(chat: ChatInfo, settings: dict[str, object]) -> str:
         "🧹 Служебные сообщения: "
         + ("✅ СКРЫТЫ" if bool(settings.get(config.DELETE_SERVICE_MESSAGES_KEY, True)) else "❌ ВИДНЫ")
         + "\n"
+        f"🌙 Тихое время: {quiet_line}\n"
+        f"🎭 Свои РП-команды: {custom_rp_count}\n"
         f"🛠 Команды модератора: включено {enabled_commands}"
         f"/{len(config.MODERATION_COMMANDS)}\n\n"
         "Нажимай на кнопки, чтобы переключать режимы~ 🌸"
@@ -563,17 +575,20 @@ def build_welcome_returning_text(
     :param name: имя пользователя.
     """
     lines = [
-        f"📋 С возвращением, <b>{escape_text(name)}</b>~",
-        "📊 Сообщений: "
-        f"{format_number(chat_user.messages_count)} | "
-        f"Репутация: {profile.reputation} | Варны: {chat_user.warns_count}/{config.MAX_WARNS}",
+        f"📋 <b>С возвращением, {escape_text(name)}</b>~",
+        "",
+        f"💬 Сообщений: {format_number(chat_user.messages_count)}",
+        f"⭐ Репутация: {profile.reputation}",
+        f"⚠️ Предупреждения: {chat_user.warns_count}/{config.MAX_WARNS}",
     ]
-    for punishment in punishments:
-        reason = escape_text(punishment.reason) if punishment.reason else "не указана"
-        lines.append(
-            f"🚷 {punishment.type_title}: {format_left(punishment.expires_at)} "
-            f"(причина: {reason})"
-        )
+    if punishments:
+        lines.extend(["", "🚷 <b>Активные наказания:</b>"])
+        for punishment in punishments:
+            reason = escape_text(punishment.reason) if punishment.reason else "не указана"
+            lines.append(
+                f"   • {punishment.type_title} — {format_left(punishment.expires_at)} "
+                f"(причина: {reason})"
+            )
     return "\n".join(lines)
 
 
@@ -609,36 +624,44 @@ def build_join_profile_summary(
     )
     name = display_name(profile, fallback or "Незнакомец")
 
-    lines = [f"📊 <b>Сводка по</b> {user_mention(name, user_id)}:"]
-    lines.append(f"🆔 ID: <code>{user_id}</code>")
-
     reputation = int(profile.reputation or 0) if profile is not None else 0
-    lines.append(f"⭐ Репутация: {reputation} {reputation_scale(reputation)}")
-
     messages = chat_user.messages_count if chat_user is not None else 0
-    lines.append(f"💬 Сообщений: {format_number(messages)}")
+    lines = [
+        f"📊 <b>Сводка по</b> {user_mention(name, user_id)}:",
+        "",
+        f"👤 ID: <code>{user_id}</code>",
+        f"⭐ Репутация: {reputation} {reputation_scale(reputation)}",
+        "",
+        f"💬 Сообщений: {format_number(messages)}",
+    ]
     if chat_user is not None:
         lines.append(f"⚠️ Предупреждения: {chat_user.warns_count}/{config.MAX_WARNS}")
 
+    flags: list[str] = []
     marks = len(profile.ban_marks or []) if profile is not None else 0
     if marks > 0:
-        lines.append(f"🏷 Метки банов: {marks} чатов")
+        flags.append(f"🏷 Метки банов: {marks} чатов")
     if profile is not None and profile.is_spammer:
-        lines.append("🚫 Метка: спамер")
+        flags.append("🚫 Метка: спамер")
     if profile is not None and profile.is_globally_banned:
-        lines.append("🔨 Глобальный бан")
+        flags.append("🔨 Глобальный бан")
+    if flags:
+        lines.append("")
+        lines.extend(flags)
 
-    for punishment in punishments:
-        reason = escape_text(punishment.reason) if punishment.reason else "не указана"
-        lines.append(
-            f"🚷 {punishment.type_title}: {format_left(punishment.expires_at)} "
-            f"(причина: {reason})"
-        )
+    if punishments:
+        lines.extend(["", "🚷 <b>Активные наказания:</b>"])
+        for punishment in punishments:
+            reason = escape_text(punishment.reason) if punishment.reason else "не указана"
+            lines.append(
+                f"   • {punishment.type_title} — {format_left(punishment.expires_at)} "
+                f"(причина: {reason})"
+            )
 
     if is_new_globally:
-        lines.append("✨ Впервые в моей базе")
+        lines.extend(["", "✨ Впервые в моей базе"])
     elif is_new_in_chat:
-        lines.append("✨ Впервые в этом чате")
+        lines.extend(["", "✨ Впервые в этом чате"])
     return "\n".join(lines)
 
 
@@ -656,30 +679,36 @@ def build_anonymous_profile_summary(
     :param profile: глобальный профиль участника (``None`` — данных нет).
     :param is_new_globally: профиля не было в базе до этого входа.
     """
-    lines = ["👤 Зашёл новый пользователь!", ""]
+    lines = ["👤 <b>Зашёл новый пользователь!</b>"]
 
     if profile is None:
-        lines.append("✨ Новый аккаунт, нет данных")
-    else:
-        reputation = int(profile.reputation or 0)
-        if reputation <= config.BAD_REPUTATION_THRESHOLD:
-            lines.append(f"⚠️ Репутация: плохая ({reputation}) 🔴")
-        elif reputation < 0:
-            lines.append(f"😔 Репутация: подпорчена ({reputation}) 🟠")
-        elif reputation == 0:
-            lines.append("😐 Репутация: нейтральная")
-        else:
-            lines.append(f"✨ Репутация: {reputation} 🟢")
+        lines.extend(["", "✨ Новый аккаунт, нет данных"])
+        return "\n".join(lines)
 
-        marks = len(profile.ban_marks or [])
-        if marks > 0:
-            lines.append(f"🏷 Метки банов: {marks} чатов")
-        if profile.is_spammer:
-            lines.append("🚫 Метка: спамер")
-        if profile.is_globally_banned:
-            lines.append("🔨 Глобальный бан")
-        if is_new_globally:
-            lines.append("✨ Впервые в моей базе")
+    reputation = int(profile.reputation or 0)
+    if reputation <= config.BAD_REPUTATION_THRESHOLD:
+        rating = f"⚠️ Репутация: плохая ({reputation}) 🔴"
+    elif reputation < 0:
+        rating = f"😔 Репутация: подпорчена ({reputation}) 🟠"
+    elif reputation == 0:
+        rating = "😐 Репутация: нейтральная"
+    else:
+        rating = f"✨ Репутация: {reputation} 🟢"
+    lines.extend(["", rating])
+
+    flags: list[str] = []
+    marks = len(profile.ban_marks or [])
+    if marks > 0:
+        flags.append(f"🏷 Метки банов: {marks} чатов")
+    if profile.is_spammer:
+        flags.append("🚫 Метка: спамер")
+    if profile.is_globally_banned:
+        flags.append("🔨 Глобальный бан")
+    if is_new_globally:
+        flags.append("✨ Впервые в моей базе")
+    if flags:
+        lines.append("")
+        lines.extend(flags)
     return "\n".join(lines)
 
 
@@ -1527,3 +1556,163 @@ def build_content_cleared_text(kind: str) -> str:
 def build_rules_command_help_text() -> str:
     """Строка-подсказка для справки о команде правил."""
     return f"📜 .{config.COMMAND_RULES} — показать правила чата"
+
+
+def build_missing_rights_text(missing: Sequence[str], title: str) -> str:
+    """Предупреждение о недостающих правах бота в чате.
+
+    :param missing: подписи прав, которых не хватает.
+    :param title: название чата.
+    """
+    lines = ["⚠️ <b>Мне не хватает прав в чате</b>"]
+    if title:
+        lines.append(escape_text(title))
+    lines.extend(["", "Чтобы я работала полноценно, дай мне права администратора:"])
+    lines.extend(f"   • {escape_text(item)}" for item in missing)
+    lines.extend(
+        [
+            "",
+            "Без них я не смогу удалять служебные сообщения, мутить "
+            "нарушителей и закрывать чат на тихое время~ 🌸",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_quiet_hours_menu_text(chat: ChatInfo, settings: dict[str, object]) -> str:
+    """Текст меню «Тихое время».
+
+    :param chat: чат, чьи настройки открыты.
+    :param settings: текущие настройки чата.
+    """
+    enabled = bool(settings.get(config.QUIET_HOURS_ENABLED_KEY))
+    start = quiet_hours_service.format_hhmm(
+        settings.get(config.QUIET_HOURS_START_KEY), config.QUIET_HOURS_DEFAULT_START
+    )
+    end = quiet_hours_service.format_hhmm(
+        settings.get(config.QUIET_HOURS_END_KEY), config.QUIET_HOURS_DEFAULT_END
+    )
+    days = quiet_hours_service.days_label(settings.get(config.QUIET_HOURS_DAYS_KEY))
+    active = bool(settings.get(config.QUIET_HOURS_ACTIVE_KEY))
+    return (
+        f"🌙 <b>Тихое время</b>\n"
+        f"{escape_text(chat.display_title)}\n\n"
+        "В это время бот закрывает чат и присылает своё сообщение.\n\n"
+        f"Состояние: {config.STATE_ON if enabled else config.STATE_OFF}\n"
+        f"⏰ Начало: <b>{start}</b>\n"
+        f"🏁 Конец: <b>{end}</b>\n"
+        f"🕒 Часовой пояс: <b>{config.MSK_LABEL}</b>\n"
+        f"📅 Дни: {days}\n"
+        f"Сейчас чат: {'🔒 закрыт' if active else '🔓 открыт'}\n\n"
+        "Если интервал переходит через полночь (например 23:00 → 08:00), "
+        "начало должно быть больше конца~"
+    )
+
+
+def build_quiet_time_prompt_text(what: str) -> str:
+    """Запрос времени (``start``/``end``) по МСК."""
+    label = "начала" if what == "start" else "конца"
+    return (
+        "⏰ <b>Время «тихого времени»</b>\n\n"
+        f"Пришли время {label} в формате <b>ЧЧ:ММ</b> (по МСК).\n"
+        "Например: <code>23:00</code> или <code>8:30</code>"
+    )
+
+
+def build_quiet_message_prompt_text(what: str) -> str:
+    """Запрос сообщения закрытия (``close``) или открытия (``open``)."""
+    if what == "open":
+        head = "☀️ <b>Сообщение об открытии</b>"
+        note = "Это сообщение уйдёт в чат, когда он снова откроется."
+    else:
+        head = "🌙 <b>Сообщение о закрытии</b>"
+        note = "Это сообщение уйдёт в чат сразу после закрытия."
+    return (
+        f"{head}\n\n"
+        f"{note}\n\n"
+        "Пришли текст (можно с премиум-эмодзи). Команда /cancel — отменить."
+    )
+
+
+def build_quiet_hours_preview_text(settings: dict[str, object]) -> str:
+    """Строка-заголовок предпросмотра сообщения о закрытии."""
+    text = str(
+        settings.get(f"{config.QUIET_HOURS_MESSAGE_PREFIX}_text") or ""
+    ).strip()
+    if text:
+        return "👁 Превью сообщения о закрытии — так увидят его участники:"
+    return "Пока пусто~ Задай текст сообщения о закрытии 🌸"
+
+
+def build_rp_custom_menu_text(
+    chat: ChatInfo,
+    commands: Sequence[dict[str, object]],
+) -> str:
+    """Текст меню «Свои РП-команды».
+
+    :param chat: чат, чьи команды настраиваются.
+    :param commands: список своих команд чата.
+    """
+    lines = [
+        "🎭 <b>Свои РП-команды</b>",
+        escape_text(chat.display_title),
+        "",
+        "Работают с префиксом, например: .моякоманда @user",
+        f"Всего: {len(commands)}/{config.MAX_CUSTOM_RP_COMMANDS}",
+        "",
+    ]
+    if not commands:
+        lines.append("Пока ничего нет~ Добавь первую команду! ✨")
+    else:
+        for item in commands:
+            emoji = str(item.get("emoji") or "🎭")
+            flag = " 🔞" if item.get("nsfw") else ""
+            lines.append(
+                f"{emoji} .{item.get('name')} — "
+                f"{escape_text(str(item.get('action') or ''))}{flag}"
+            )
+    return "\n".join(lines)
+
+
+def build_quiet_days_text(chat: ChatInfo) -> str:
+    """Текст экрана выбора дней недели для «тихого времени».
+
+    :param chat: чат, чьи настройки открыты.
+    """
+    return (
+        "📅 <b>Дни «тихого времени»</b>\n"
+        f"{escape_text(chat.display_title)}\n\n"
+        "Нажми на день, чтобы включить или выключить его.\n"
+        "Дни считаются по дню начала окна (если интервал переходит через полночь)."
+    )
+
+
+def build_rp_custom_name_prompt_text() -> str:
+    """Шаг 1/3 редактора своей РП-команды: название."""
+    return (
+        "🎭 <b>Новая РП-команда</b> (шаг 1/3)\n\n"
+        "Пришли <b>название команды</b> одним словом (без пробелов и префикса).\n"
+        f"До {config.MAX_CUSTOM_RP_NAME_LENGTH} символов, только буквы, цифры, _ и -\n\n"
+        "Например: <code>ущипнуть</code>"
+    )
+
+
+def build_rp_custom_emoji_prompt_text(name: str) -> str:
+    """Шаг 2/3 редактора своей РП-команды: эмодзи."""
+    return (
+        "🎭 <b>Новая РП-команда</b> (шаг 2/3)\n\n"
+        f"Команда: <b>.{escape_text(name)}</b>\n"
+        "Пришли <b>эмодзи</b>, которое будет показываться в действии.\n\n"
+        "Например: 🎭"
+    )
+
+
+def build_rp_custom_action_prompt_text(name: str) -> str:
+    """Шаг 3/3 редактора своей РП-команды: текст действия."""
+    return (
+        "🎭 <b>Новая РП-команда</b> (шаг 3/3)\n\n"
+        f"Команда: <b>.{escape_text(name)}</b>\n"
+        "Пришли <b>текст действия</b> — что бот напишет между участниками.\n\n"
+        f"До {config.MAX_CUSTOM_RP_ACTION_LENGTH} символов.\n"
+        "Например: <code>ущипнул(а)</code>"
+    )

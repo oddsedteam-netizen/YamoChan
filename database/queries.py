@@ -274,6 +274,70 @@ async def update_chat_setting(db: Database, chat_id: int, key: str, value: Any) 
     return settings
 
 
+async def get_chats_with_quiet_hours(db: Database) -> list[int]:
+    """Идентификаторы чатов, где включено «тихое время».
+
+    :param db: соединение с базой данных.
+    """
+    rows = await db.fetch_all("SELECT chat_id, settings FROM chats")
+    result: list[int] = []
+    for row in rows:
+        settings = models.load_json_dict(row["settings"])
+        if bool(settings.get(config.QUIET_HOURS_ENABLED_KEY)):
+            result.append(int(row["chat_id"]))
+    return result
+
+
+def normalize_custom_rp_commands(raw: Any) -> list[dict[str, Any]]:
+    """Привести пользовательские РП-команды к корректному списку.
+
+    Отбрасывает мусор, дубликаты и лишние записи сверх лимита.
+
+    :param raw: значение настройки ``custom_rp_commands``.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("name") or "").strip().lower()
+        action = str(item.get("action") or "").strip()
+        if not name or not action or name in seen:
+            continue
+        seen.add(name)
+        result.append(
+            {
+                "name": name,
+                "emoji": str(item.get("emoji") or "").strip(),
+                "action": action,
+                "nsfw": bool(item.get("nsfw")),
+            }
+        )
+        if len(result) >= config.MAX_CUSTOM_RP_COMMANDS:
+            break
+    return result
+
+
+async def get_all_custom_rp_commands(db: Database) -> dict[int, list[dict[str, Any]]]:
+    """Пользовательские РП-команды всех чатов.
+
+    :param db: соединение с базой данных.
+    :returns: словарь ``chat_id → список команд``.
+    """
+    rows = await db.fetch_all("SELECT chat_id, settings FROM chats")
+    result: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        settings = models.load_json_dict(row["settings"])
+        commands = normalize_custom_rp_commands(
+            settings.get(config.CUSTOM_RP_COMMANDS_KEY)
+        )
+        if commands:
+            result[int(row["chat_id"])] = commands
+    return result
+
+
 async def update_chat_command(
     db: Database,
     chat_id: int,

@@ -22,5 +22,7 @@ __all__ = [
     "permissions",
     "profile",
     "punishment",
+    "quiet_hours",
+    "rp_commands",
     "time_parser",
 ]

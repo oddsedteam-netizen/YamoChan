@@ -27,11 +27,12 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
+import config
 from database import queries
 from database.db import Database
 from database.models import ChatInfo, UserProfile
 from keyboards import inline
-from services import permissions, profile as profile_service
+from services import permissions, profile as profile_service, rp_commands
 from utils import command_filter, error_handler, html_utils, telegram
 
 logger = logging.getLogger(__name__)
@@ -156,24 +157,38 @@ def parse_roleplay(text: Optional[str]) -> Optional[ParsedRoleplay]:
 
 
 class RoleplayFilter(BaseFilter):
-    """Фильтр: сообщение является известной RP-командой (только с префиксом).
+    """Фильтр: сообщение является РП-командой (встроенной или своей).
 
-    За распознавание префиксов отвечает
-    :class:`yamochan.utils.command_filter.RPCommand`.
+    РП-команды работают только с префиксом (``.обнять``, ``/обнять``,
+    ``!обнять``): без префикса обычная речь («я обнял её») считалась бы
+    командой. Кроме встроенных команд распознаются свои команды владельца из
+    реестра :data:`yamochan.services.rp_commands.rp_command_store`.
     """
 
     def __init__(self) -> None:
-        """Собрать фильтр по словарю RP-команд."""
-        self._rp: command_filter.RPCommand = command_filter.RPCommand(RP_COMMANDS)
+        """Создать фильтр (состав команд берётся на момент сообщения)."""
 
     async def __call__(self, message: Message) -> Any:
         """Разобрать текст и передать команду в хендлер."""
-        if not await self._rp(message):
-            return False
         parsed = parse_roleplay(message.text)
-        if parsed is None:
+        if parsed is not None:
+            return {"command": parsed}
+        custom = self._custom_command(message)
+        if custom is None:
             return False
-        return {"command": parsed}
+        return {"command": custom}
+
+    @staticmethod
+    def _custom_command(message: Message) -> Optional[ParsedRoleplay]:
+        """Разобрать свою (пользовательскую) РП-команду чата."""
+        raw = command_filter.split_command(message.text, require_prefix=True)
+        if raw is None:
+            return None
+        name, tail = raw
+        chat_id = int(getattr(getattr(message, "chat", None), "id", 0) or 0)
+        if not rp_commands.rp_command_store.has(chat_id, name):
+            return None
+        return ParsedRoleplay(name=name, args=[part for part in tail.split() if part])
 
 
 def _user_name(user: Any) -> str:
@@ -186,6 +201,44 @@ def _profile_name(profile: Optional[UserProfile], fallback: str) -> str:
     if profile is not None and profile.display_name:
         return profile.display_name
     return fallback
+
+
+def resolve_roleplay(
+    chat_id: int,
+    name: str,
+    settings: dict[str, Any],
+) -> Optional[tuple[str, str, bool]]:
+    """Найти эмодзи и действие РП-команды (встроенной или своей).
+
+    :param chat_id: идентификатор чата.
+    :param name: имя команды без префикса.
+    :param settings: настройки чата (для своих команд берётся реестр).
+    :returns: ``(эмодзи, действие, nsfw)`` или ``None``, если команды нет.
+    """
+    if name in RP_COMMANDS:
+        emoji, action = RP_COMMANDS[name]
+        return (emoji, action, name in NSFW_RP_COMMANDS)
+    custom = rp_commands.rp_command_store.get(chat_id, name)
+    if custom is None:
+        return None
+    return (
+        str(custom.get("emoji") or "🎭"),
+        str(custom.get("action") or ""),
+        bool(custom.get("nsfw")),
+    )
+
+
+def neutral_action(action: str) -> str:
+    """Убрать родовые окончания из действия — для подписи «Админ …».
+
+    Например ``"пнул(а)"`` → ``"пнул"``, ``"танцует с"`` → ``"танцует с"``.
+
+    :param action: строка действия из таблицы РП-команд.
+    """
+    text = str(action or "")
+    for suffix in ("(ась)", "(лась)", "(а)"):
+        text = text.replace(suffix, "")
+    return " ".join(text.split())
 
 
 async def resolve_target(
@@ -234,9 +287,15 @@ def build_action_text(
     sender_name: str,
     target_id: int,
     target_name: str,
+    *,
+    actor_label: Optional[str] = None,
 ) -> str:
-    """Собрать HTML-строку действия со ссылками на обоих участников."""
-    sender_link = profile_service.user_mention(sender_name, sender_id)
+    """Собрать HTML-строку действия со ссылками на обоих участников.
+
+    :param actor_label: если задан, вместо ссылки на отправителя подставляется
+        нейтральная подпись (например ``"Админ"``) — так админ не деанонимится.
+    """
+    sender_link = actor_label or profile_service.user_mention(sender_name, sender_id)
     target_link = profile_service.user_mention(target_name, target_id)
     return f"{emoji} {sender_link} {action} {target_link}~"
 
@@ -246,12 +305,18 @@ async def handle_roleplay(
     message: Message,
     command: ParsedRoleplay,
     db: Database,
+    bot: Bot,
 ) -> None:
-    """Выполнить RP-команду (доступна всем участникам чата).
+    """Выполнить РП-команду (встроенную или свою) — доступна всем участникам.
+
+    Если автором команды является администратор чата, а настройка
+    ``rp_hide_admins`` включена, бот пишет «Админ …» вместо имени автора —
+    чтобы не деанонимизировать модерацию.
 
     :param message: сообщение с командой.
     :param command: разобранная команда (прокидывается фильтром).
     :param db: соединение с базой данных.
+    :param bot: экземпляр бота (нужен, чтобы распознать админа).
     """
     try:
         sender = message.from_user
@@ -262,31 +327,56 @@ async def handle_roleplay(
         sender_profile = await queries.get_user(db, sender.id)
         sender_name = _profile_name(sender_profile, _user_name(sender))
 
-        if command.name in NSFW_RP_COMMANDS:
-            settings = await queries.get_chat_settings(db, message.chat.id)
-            if not settings.get("nsfw_commands"):
-                await message.reply(NSFW_DISABLED_TEXT)
-                return
+        settings = await queries.get_chat_settings(db, message.chat.id)
+        resolved = resolve_roleplay(message.chat.id, command.name, settings)
+        if resolved is None:
+            return
+        emoji, action, nsfw = resolved
+
+        if nsfw and not settings.get("nsfw_commands"):
+            await message.reply(NSFW_DISABLED_TEXT)
+            return
 
         target, error = await resolve_target(message, command.args, db)
         if target is None:
             await message.reply(error or UNKNOWN_TARGET_TEXT)
             return
 
-        emoji, action = RP_COMMANDS[command.name]
+        actor_label: Optional[str] = None
+        if bool(settings.get(config.RP_HIDE_ADMINS_KEY, True)):
+            try:
+                admin_ids = await permissions.get_chat_admin_ids(
+                    bot, message.chat.id
+                )
+                if sender.id in admin_ids:
+                    actor_label = config.RP_ADMIN_LABEL
+            except Exception as exc:
+                logger.info("Не удалось проверить админа для РП-команды: %s", exc)
+        if actor_label is not None:
+            action = neutral_action(action)
+
         await message.answer(
-            build_action_text(emoji, action, sender.id, sender_name, target[0], target[1]),
+            build_action_text(
+                emoji,
+                action,
+                sender.id,
+                sender_name,
+                target[0],
+                target[1],
+                actor_label=actor_label,
+            ),
             parse_mode=ParseMode.HTML,
         )
         logger.info(
-            "RP-команда «.%s»: %s → %s в чате %s",
+            "РП-команда «.%s»: %s → %s в чате %s (скрыт автор: %s)",
             command.name,
             sender.id,
             target[0],
             message.chat.id,
+            "да" if actor_label else "нет",
         )
     except Exception as exc:
-        error_handler.log_exception(f"RP-команде «.{command.name}»", exc)
+        error_handler.log_exception(f"РП-команде «.{command.name}»", exc)
         await error_handler.notify_user_softly(message)
 
 

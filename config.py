@@ -27,7 +27,7 @@ load_dotenv(dotenv_path=LOCAL_ENV_FILE, override=True)
 
 BOT_TOKEN: Final[str] = os.getenv("BOT_TOKEN", "").strip()
 BOT_NAME: Final[str] = "YamoChan"
-BOT_VERSION: Final[str] = "1.1.0"
+BOT_VERSION: Final[str] = "1.2.0"
 
 DB_PATH: Final[Path] = Path(
     os.getenv("DB_PATH", str(BASE_DIR / "data" / "yamochan.db"))
@@ -227,7 +227,7 @@ SERVICE_DELETE_BATCH: Final[int] = 100
 SERVICE_CLEANUP_QUEUE_MAX: Final[int] = 500
 SERVICE_CLEANUP_BATCH_DELAY: Final[float] = 0.5
 SERVICE_CLEANUP_INTERVAL: Final[float] = 0.5
-JOIN_DEDUP_TTL: Final[float] = 60.0
+JOIN_DEDUP_TTL: Final[float] = 10.0
 GREETING_RETRY_DELAYS: Final[tuple[float, ...]] = (3.0, 8.0)
 MAX_CHATS_IN_LIST: Final[int] = 12
 MAX_WARN_CHATS_IN_PROFILE: Final[int] = 5
@@ -330,6 +330,33 @@ DELETE_SERVICE_MESSAGES_KEY: Final[str] = "delete_service_messages"
 CALL_ADMINS_ONLY_KEY: Final[str] = "call_admins_only"
 CALL_ADMINS_ONLY_MESSAGE: Final[str] = "📞 Call доступен только админам~ 💕"
 
+MSK_OFFSET_HOURS: Final[int] = 3
+MSK_LABEL: Final[str] = "МСК (UTC+3)"
+
+QUIET_HOURS_ENABLED_KEY: Final[str] = "quiet_hours_enabled"
+QUIET_HOURS_START_KEY: Final[str] = "quiet_hours_start"
+QUIET_HOURS_END_KEY: Final[str] = "quiet_hours_end"
+QUIET_HOURS_DAYS_KEY: Final[str] = "quiet_hours_days"
+QUIET_HOURS_MESSAGE_PREFIX: Final[str] = "quiet_hours_message"
+QUIET_HOURS_OPEN_MESSAGE_PREFIX: Final[str] = "quiet_hours_open_message"
+QUIET_HOURS_ACTIVE_KEY: Final[str] = "quiet_hours_active"
+QUIET_HOURS_DEFAULT_START: Final[str] = "23:00"
+QUIET_HOURS_DEFAULT_END: Final[str] = "08:00"
+QUIET_HOURS_DEFAULT_DAYS: Final[tuple[int, ...]] = (0, 1, 2, 3, 4, 5, 6)
+QUIET_HOURS_DEFAULT_MESSAGE: Final[str] = (
+    "🌙 Чат закрыт на тихое время~ Возвращаемся позже 💤"
+)
+QUIET_HOURS_DEFAULT_OPEN_MESSAGE: Final[str] = "☀️ Чат снова открыт~ Добро пожаловать!"
+QUIET_HOURS_CHECK_INTERVAL: Final[int] = 30
+WEEKDAY_TITLES: Final[tuple[str, ...]] = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+
+RP_ADMIN_LABEL: Final[str] = "Админ"
+RP_HIDE_ADMINS_KEY: Final[str] = "rp_hide_admins"
+CUSTOM_RP_COMMANDS_KEY: Final[str] = "custom_rp_commands"
+MAX_CUSTOM_RP_COMMANDS: Final[int] = 30
+MAX_CUSTOM_RP_NAME_LENGTH: Final[int] = 32
+MAX_CUSTOM_RP_ACTION_LENGTH: Final[int] = 64
+
 DEFAULT_CHAT_SETTINGS: Final[dict[str, Any]] = {
     "nsfw_commands": False,
     "antiraid": False,
@@ -366,6 +393,19 @@ DEFAULT_CHAT_SETTINGS: Final[dict[str, Any]] = {
     "join_mute_duration": JOIN_MUTE_DEFAULT_SECONDS,
     "delete_service_messages": True,
     "disabled_mod_commands": [],
+    "rp_hide_admins": True,
+    "custom_rp_commands": [],
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": QUIET_HOURS_DEFAULT_START,
+    "quiet_hours_end": QUIET_HOURS_DEFAULT_END,
+    "quiet_hours_days": list(QUIET_HOURS_DEFAULT_DAYS),
+    "quiet_hours_message_text": QUIET_HOURS_DEFAULT_MESSAGE,
+    "quiet_hours_message_entities": [],
+    "quiet_hours_message_photo": None,
+    "quiet_hours_open_message_text": QUIET_HOURS_DEFAULT_OPEN_MESSAGE,
+    "quiet_hours_open_message_entities": [],
+    "quiet_hours_open_message_photo": None,
+    "quiet_hours_active": False,
     "commands": {command: True for command in MODERATION_COMMANDS},
 }
 

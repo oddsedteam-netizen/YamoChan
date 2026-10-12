@@ -40,13 +40,17 @@ from handlers import (
     events,
     faq,
     moderation,
+    quiet_hours,
     roleplay,
+    rp_custom,
     rules,
     start,
 )
 from services import call as call_service
 from services import join_queue as join_queue_service
 from services import punishment
+from services import quiet_hours as quiet_hours_service
+from services import rp_commands as rp_commands_service
 from services import service_cleanup as service_cleanup_service
 from utils import error_handler, lock
 
@@ -179,13 +183,15 @@ def build_dispatcher(db: Database) -> Dispatcher:
     dispatcher.include_router(complaints.router)
     dispatcher.include_router(admin_panel.router)
     dispatcher.include_router(antiraid.router)
+    dispatcher.include_router(events.router)
     dispatcher.include_router(roleplay.router)
+    dispatcher.include_router(rp_custom.router)
     dispatcher.include_router(call.router)
     dispatcher.include_router(rules.router)
+    dispatcher.include_router(quiet_hours.router)
     dispatcher.include_router(start.router)
     dispatcher.include_router(diagnostics.router)
     dispatcher.include_router(moderation.router)
-    dispatcher.include_router(events.router)
     dispatcher.include_router(faq.router)
     dispatcher.include_router(callbacks.router)
 
@@ -223,6 +229,32 @@ async def expiration_worker(db: Database, bot: Bot, stop_event: asyncio.Event) -
         try:
             await asyncio.wait_for(
                 stop_event.wait(), timeout=max(5, config.EXPIRATION_CHECK_INTERVAL)
+            )
+        except asyncio.TimeoutError:
+            continue
+        except asyncio.CancelledError:
+            raise
+
+
+async def quiet_hours_worker(db: Database, bot: Bot, stop_event: asyncio.Event) -> None:
+    """Фоновая задача: закрывать и открывать чаты по «тихому времени».
+
+    :param db: соединение с базой данных.
+    :param bot: экземпляр бота.
+    :param stop_event: событие выключения бота.
+    """
+    logger.info("Воркер «тихого времени» запущен.")
+    while not stop_event.is_set():
+        try:
+            await quiet_hours_service.run_quiet_hours_cycle(db, bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("Ошибка в воркере тихого времени", exc_info=True)
+
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=max(5, config.QUIET_HOURS_CHECK_INTERVAL)
             )
         except asyncio.TimeoutError:
             continue
@@ -342,6 +374,16 @@ async def main() -> int:
         await db.connect()
         await db.init_schema()
 
+        try:
+            custom_rp = await queries.get_all_custom_rp_commands(db)
+            for chat_key, items in custom_rp.items():
+                rp_commands_service.rp_command_store.set_all(chat_key, items)
+            logger.info(
+                "Свои РП-команды загружены: чатов %s.", len(custom_rp)
+            )
+        except Exception as exc:
+            error_handler.log_exception("загрузке своих РП-команд", exc)
+
         session = AiohttpSession(
             timeout=config.TELEGRAM_REQUEST_TIMEOUT,
             limit=config.TELEGRAM_SESSION_LIMIT,
@@ -367,6 +409,7 @@ async def main() -> int:
         await call_service.restore_scheduled(bot, db)
 
         tasks.append(asyncio.create_task(expiration_worker(db, bot, stop_event)))
+        tasks.append(asyncio.create_task(quiet_hours_worker(db, bot, stop_event)))
         tasks.append(asyncio.create_task(watchdog(dp, stop_event)))
         service_cleanup_service.service_cleanup.start(bot, stop_event)
 

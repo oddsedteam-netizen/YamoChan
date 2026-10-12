@@ -54,6 +54,14 @@ class ServiceCleanupQueue:
             return
         if self.pending >= config.SERVICE_CLEANUP_QUEUE_MAX:
             self.dropped += 1
+            own = self._queues.get(chat_id)
+            if own:
+                own.popleft()
+            else:
+                for queue in self._queues.values():
+                    if queue:
+                        queue.popleft()
+                        break
             logger.warning(
                 "Очередь удаления служебных сообщений переполнена (%s) — "
                 "самое старое сообщение в чате %s сброшено (сброшено всего: %s).",
@@ -61,10 +69,6 @@ class ServiceCleanupQueue:
                 chat_id,
                 self.dropped,
             )
-            for queue in self._queues.values():
-                if queue:
-                    queue.popleft()
-                    break
         self._queues.setdefault(chat_id, deque()).append(int(message_id))
         self.enqueued += 1
 
@@ -160,7 +164,7 @@ class ServiceCleanupQueue:
                     attempts,
                 )
                 queue.extendleft(reversed(batch))
-                break
+                continue
 
             if self.pending and config.SERVICE_CLEANUP_BATCH_DELAY:
                 await asyncio.sleep(config.SERVICE_CLEANUP_BATCH_DELAY)

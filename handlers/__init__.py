@@ -33,7 +33,9 @@ __all__ = [
     "events",
     "faq",
     "moderation",
+    "quiet_hours",
     "roleplay",
+    "rp_custom",
     "rules",
     "start",
 ]

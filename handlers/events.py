@@ -573,6 +573,7 @@ async def handle_user_join(
     show_profile = rules_ui.setting_flag(
         settings, rules_ui.GREETING_PROFILE_KEY, "welcome_show_profile"
     )
+    profile_block = False
     if anonymous:
         blocks.append(
             profile_service.build_anonymous_profile_summary(
@@ -580,6 +581,7 @@ async def handle_user_join(
                 is_new_globally=bool(summary.is_new_globally) if summary else False,
             )
         )
+        profile_block = True
     elif show_profile and summary is not None:
         blocks.append(
             profile_service.build_join_profile_summary(
@@ -592,8 +594,13 @@ async def handle_user_join(
                 fallback_name=name,
             )
         )
-    elif not greeting_sent and summary is not None and summary.fallback_text:
-        blocks.append(summary.fallback_text)
+        profile_block = True
+
+    if not greeting_sent and not profile_block:
+        if summary is not None and summary.fallback_text:
+            blocks.append(summary.fallback_text)
+        else:
+            blocks.append(profile_service.build_welcome_new_text(name))
 
     if applied is not None:
         reason, duration = applied
@@ -1087,10 +1094,11 @@ async def on_left_member(message: Message, db: Database) -> None:
     """
     try:
         member = message.left_chat_member
-        if member is None or member.is_bot:
-            return
         settings = await queries.get_chat_settings(db, message.chat.id)
         await delete_service_message(message, settings)
+        if member is None or member.is_bot:
+            return
+        join_dedup.forget("join", message.chat.id, member.id)
         await queries.set_member_presence(db, message.chat.id, member.id, False)
         chat_info = await queries.get_chat(db, message.chat.id)
         known_members = chat_info.members_count if chat_info is not None else 0
@@ -1150,6 +1158,37 @@ async def _banned_owner_of(
                 "Не удалось проверить бан пользователя %s", candidate, exc_info=True
             )
     return None
+
+
+async def _warn_missing_rights(bot: Bot, chat: Any, owner_id: Optional[int]) -> None:
+    """Предупредить чат и владельца, каких прав боту в чате не хватает.
+
+    :param bot: экземпляр бота.
+    :param chat: объект чата из апдейта (``Chat``).
+    :param owner_id: идентификатор владельца чата (может быть ``None``).
+    """
+    try:
+        missing = await permissions.missing_bot_rights(bot, int(chat.id))
+    except Exception as exc:
+        error_handler.log_exception("проверке прав бота в чате", exc)
+        return
+    if not missing:
+        return
+    logger.warning(
+        "Боту не хватает прав в чате %s (%s): %s",
+        chat.id,
+        chat.title,
+        ", ".join(missing),
+    )
+    text = profile_service.build_missing_rights_text(missing, chat.title or "")
+    targets: list[int] = [int(chat.id)]
+    if owner_id:
+        targets.append(int(owner_id))
+    for target in targets:
+        try:
+            await bot.send_message(target, text)
+        except Exception as exc:
+            logger.info("Не удалось предупредить о правах в %s: %s", target, exc)
 
 
 @router.my_chat_member()
@@ -1215,5 +1254,6 @@ async def on_bot_membership(event: ChatMemberUpdated, db: Database, bot: Bot) ->
             owner_channel_id,
         )
         await bot.send_message(chat.id, BOT_ADDED_GREETING)
+        await _warn_missing_rights(bot, chat, owner_id)
     except Exception as exc:
         error_handler.log_exception("добавлении бота в чат", exc)

@@ -243,6 +243,56 @@ async def is_chat_administrator(bot: Bot, chat_id: int, user_id: int) -> bool:
     return status in ADMIN_STATUSES
 
 
+BOT_RIGHTS_LABELS: dict[str, str] = {
+    "admin": "Быть администратором чата",
+    "delete": "Удалять сообщения",
+    "restrict": "Ограничивать участников",
+}
+
+
+async def bot_rights_status(bot: Bot, chat_id: int) -> dict[str, Optional[bool]]:
+    """Проверить, какие права есть у бота в чате.
+
+    :param bot: экземпляр бота.
+    :param chat_id: идентификатор чата.
+    :returns: словарь ``право → есть ли``; ``None`` — проверить не удалось.
+    """
+    status: dict[str, Optional[bool]] = {key: None for key in BOT_RIGHTS_LABELS}
+    bot_id = getattr(bot, "id", None)
+    if bot_id is None:
+        try:
+            bot_id = (await bot.get_me()).id
+        except Exception as exc:
+            logger.warning("Не удалось получить id бота для проверки прав: %s", exc)
+            return status
+    member = await get_chat_member(bot, chat_id, int(bot_id))
+    if member is None:
+        logger.info("Проверка прав бота в чате %s: данные участника недоступны.", chat_id)
+        return status
+    if member.status == "creator":
+        return {key: True for key in BOT_RIGHTS_LABELS}
+    if member.status != "administrator":
+        return {key: False for key in BOT_RIGHTS_LABELS}
+    status["admin"] = True
+    status["delete"] = bool(getattr(member, "can_delete_messages", False))
+    status["restrict"] = bool(getattr(member, "can_restrict_members", False))
+    return status
+
+
+async def missing_bot_rights(bot: Bot, chat_id: int) -> list[str]:
+    """Человеческие подписи прав, которых боту в чате не хватает.
+
+    :param bot: экземпляр бота.
+    :param chat_id: идентификатор чата.
+    """
+    status = await bot_rights_status(bot, chat_id)
+    return [
+        label
+        for key, label in BOT_RIGHTS_LABELS.items()
+        if status.get(key) is not True
+    ]
+
+
 async def is_anonymous_admin_sender(
     bot: Bot,
     chat_id: int,

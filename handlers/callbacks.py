@@ -315,6 +315,10 @@ async def on_settings_callbacks(callback: CallbackQuery, db: Database, bot: Bot)
             await callback.answer("Подменю команд открыто~ 🛠")
             return
 
+        if action == "rights" and len(parts) >= 3:
+            await _show_bot_rights(callback, bot, _chat_id_from(parts[2]))
+            return
+
         if action == "command" and len(parts) >= 4:
             await _toggle_command(callback, db, bot, user.id, parts[2], _chat_id_from(parts[3]))
             return
@@ -340,6 +344,33 @@ def _chat_id_from(raw: str) -> int:
     if cleaned.lstrip("-").isdigit():
         return int(cleaned)
     return 0
+
+
+async def _show_bot_rights(
+    callback: CallbackQuery,
+    bot: Bot,
+    chat_id: int,
+) -> None:
+    """Показать, каких прав боту не хватает в чате (всплывающим окном).
+
+    :param callback: нажатие кнопки.
+    :param bot: экземпляр бота.
+    :param chat_id: идентификатор чата.
+    """
+    if not chat_id:
+        await callback.answer("Не поняла, о каком чате речь~ 🤔", show_alert=True)
+        return
+    try:
+        missing = await permissions.missing_bot_rights(bot, chat_id)
+    except Exception as exc:
+        error_handler.log_exception("проверке прав бота", exc)
+        await callback.answer("Не смогла проверить права~ 🌸", show_alert=True)
+        return
+    if not missing:
+        await callback.answer("✅ Все нужные права у бота есть~", show_alert=True)
+        return
+    text = "Не хватает прав:\n" + "\n".join(f"• {item}" for item in missing)
+    await callback.answer(text, show_alert=True)
 
 
 async def _toggle_setting(
