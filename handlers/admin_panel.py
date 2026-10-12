@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any, Final, Optional
@@ -444,6 +445,49 @@ async def _refresh_counters(callback: CallbackQuery, db: Database, bot: Bot) -> 
     )
 
 
+async def _resync_chats(callback: CallbackQuery, db: Database, bot: Bot) -> None:
+    """Тихо перепроверить владельцев и админов во всех чатах.
+
+    Уведомления в чаты НЕ отправляются: заново спрашиваем у Telegram состав
+    администраторов, определяем владельца и сбрасываем кэш админов, чтобы
+    права пересчитались начисто.
+
+    :param callback: нажатие кнопки.
+    :param db: соединение с базой данных.
+    :param bot: экземпляр бота.
+    """
+    permissions.clear_admin_cache()
+    try:
+        chat_ids = await queries.get_known_chat_ids(db)
+    except Exception as exc:
+        error_handler.log_exception("получении списка чатов для перепроверки", exc)
+        chat_ids = []
+
+    owners_found = 0
+    failed = 0
+    for chat_id in chat_ids:
+        try:
+            owner_id, _ = await permissions.sync_chat_owner(bot, db, chat_id)
+            if owner_id:
+                owners_found += 1
+        except Exception as exc:
+            failed += 1
+            logger.info("Перепроверка чата %s не удалась: %s", chat_id, exc)
+        await asyncio.sleep(0.05)
+
+    await queries.log_admin_action(
+        db,
+        "resync_chats",
+        None,
+        f"чатов: {len(chat_ids)}, владельцев: {owners_found}",
+    )
+    await _render(
+        callback,
+        admin_service.build_resync_chats_text(len(chat_ids), owners_found, failed),
+        inline.admin_quick_actions_keyboard(),
+    )
+
+
 async def _cleanup_logs(callback: CallbackQuery, db: Database) -> None:
     """Удалить старые записи журнала действий."""
     removed = await queries.cleanup_admin_log(db, config.ADMIN_LOG_TTL_DAYS)
@@ -681,6 +725,8 @@ async def _dispatch_quick(
         await _reset_admin_cache(callback, db)
     elif operation == "counters":
         await _refresh_counters(callback, db, bot)
+    elif operation == "resync":
+        await _resync_chats(callback, db, bot)
     elif operation == "logs":
         await _cleanup_logs(callback, db)
     elif operation == "backup":

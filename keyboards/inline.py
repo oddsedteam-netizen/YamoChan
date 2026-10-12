@@ -1246,6 +1246,11 @@ def admin_quick_actions_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(_inline_button("🔄 Перезагрузить кэш админов", f"{CB_ADM}quick:cache"))
     builder.row(_inline_button("📊 Обновить счётчики", f"{CB_ADM}quick:counters"))
+    builder.row(
+        _inline_button(
+            "🔍 Перепроверить чаты (владельцы/админы)", f"{CB_ADM}quick:resync"
+        )
+    )
     builder.row(_inline_button("🗑 Очистить старые логи", f"{CB_ADM}quick:logs"))
     builder.row(_inline_button("💾 Бэкап БД", f"{CB_ADM}quick:backup"))
     builder.row(_inline_button("🔙 В панель", f"{CB_ADM}panel"))

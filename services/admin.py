@@ -59,6 +59,7 @@ ACTION_TITLES: Final[dict[str, str]] = {
     "message_user": "📨 Сообщение пользователю",
     "reset_admin_cache": "🔄 Сброшен кэш админов",
     "refresh_counters": "📊 Обновлены счётчики",
+    "resync_chats": "🔄 Перепроверены чаты",
     "cleanup_logs": "🗑 Очищены старые логи",
     "backup_db": "💾 Бэкап базы данных",
 }
@@ -333,6 +334,25 @@ def build_counters_refreshed_text(result: dict[str, int]) -> str:
         f"👥 Чатов с обновлённым числом участников: {result.get('members_updated', 0)}\n"
         f"💬 Чатов проверено: {result.get('chats_checked', 0)}"
     )
+
+
+def build_resync_chats_text(chats: int, owners: int, failed: int = 0) -> str:
+    """Результат тихой перепроверки чатов (владельцы и админы).
+
+    :param chats: сколько чатов проверено.
+    :param owners: у скольких чатов определён владелец.
+    :param failed: сколько чатов не удалось проверить.
+    """
+    lines = [
+        "✅ Перепроверка чатов завершена.",
+        "",
+        f"💬 Чатов проверено: {chats}",
+        f"👑 Владельцев найдено: {owners}",
+    ]
+    if failed:
+        lines.append(f"⚠️ Не удалось проверить: {failed}")
+    lines.extend(["", "Кэш админов сброшен, уведомления в чаты не отправлялись."])
+    return "\n".join(lines)
 
 
 def build_logs_cleared_text(removed: int) -> str:
