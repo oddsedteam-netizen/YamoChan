@@ -32,7 +32,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import config
 from database.models import ChatInfo
-from services import richtext, time_parser
+from services import quiet_hours as quiet_hours_service, richtext, time_parser
 from utils import faq_texts
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,8 @@ CB_CALL: str = "call:"
 CB_RULES: str = "rules:"
 CB_GREETING: str = "greeting:"
 CB_FAQ: str = "faq:"
+CB_QUIET: str = "quiet:"
+CB_RPC: str = "rpc:"
 CB_ADM: str = "adm:"
 CB_COMPLAINT: str = "complaint:"
 
@@ -338,6 +340,9 @@ def settings_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboa
     greeting_enabled = bool(settings.get("greeting_enabled"))
     service_messages = bool(settings.get(config.DELETE_SERVICE_MESSAGES_KEY, True))
     protection = bool(settings.get("antiraid_active_protection"))
+    quiet_enabled = bool(settings.get(config.QUIET_HOURS_ENABLED_KEY))
+    rp_custom = settings.get(config.CUSTOM_RP_COMMANDS_KEY)
+    rp_custom_count = len(rp_custom) if isinstance(rp_custom, (list, tuple)) else 0
 
     builder = InlineKeyboardBuilder()
     builder.button(
@@ -368,7 +373,15 @@ def settings_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboa
         callback_data=f"{CB_SETTINGS}toggle:service:{chat_id}",
     )
     builder.button(
-        text="🛠  Настройка команд модератора  🛠",
+        text=f"🌙 Тихое время: {state_icon(quiet_enabled)}",
+        callback_data=f"{CB_QUIET}menu:{chat_id}",
+    )
+    builder.button(
+        text=f"🎭 РП-команды: {rp_custom_count}",
+        callback_data=f"{CB_RPC}menu:{chat_id}",
+    )
+    builder.button(
+        text="🛠 Настройка команд модератора 🛠",
         callback_data=f"{CB_SETTINGS}commands:{chat_id}",
     )
     if protection:
@@ -376,8 +389,12 @@ def settings_keyboard(chat_id: int, settings: dict[str, object]) -> InlineKeyboa
             text="🛡 Снять активную защиту",
             callback_data=f"{CB_ANTIRAID}lift:{chat_id}",
         )
+    builder.button(
+        text="🔎 Права бота",
+        callback_data=f"{CB_SETTINGS}rights:{chat_id}",
+    )
     builder.button(text="🔙 Назад к чату", callback_data=f"{CB_CHAT_DETAIL}{chat_id}")
-    rows = [2, 2, 1, 1, 1, 1]
+    rows = [2, 2, 1, 1, 1, 1, 1, 1, 1]
     if protection:
         rows.append(1)
     builder.adjust(*rows)
@@ -1283,5 +1300,134 @@ def complaint_prompt_keyboard() -> InlineKeyboardMarkup:
     """Возврат из ожидания описания жалобы."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 Назад", callback_data=f"{CB_COMPLAINT}open")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def quiet_hours_keyboard(
+    chat_id: int,
+    settings: dict[str, object],
+) -> InlineKeyboardMarkup:
+    """Меню «Тихое время»: режим, интервал, дни недели и тексты.
+
+    :param chat_id: идентификатор чата.
+    :param settings: текущие настройки чата.
+    """
+    enabled = bool(settings.get(config.QUIET_HOURS_ENABLED_KEY))
+    start = quiet_hours_service.format_hhmm(
+        settings.get(config.QUIET_HOURS_START_KEY), config.QUIET_HOURS_DEFAULT_START
+    )
+    end = quiet_hours_service.format_hhmm(
+        settings.get(config.QUIET_HOURS_END_KEY), config.QUIET_HOURS_DEFAULT_END
+    )
+    days = quiet_hours_service.days_short(settings.get(config.QUIET_HOURS_DAYS_KEY))
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        _inline_button(f"🌙 Режим: {state_mark(enabled)}", f"{CB_QUIET}toggle:{chat_id}")
+    )
+    builder.row(
+        _inline_button(f"⏰ Начало: {start}", f"{CB_QUIET}start:{chat_id}"),
+        _inline_button(f"🏁 Конец: {end}", f"{CB_QUIET}end:{chat_id}"),
+    )
+    builder.row(_inline_button(f"📅 Дни: {days}", f"{CB_QUIET}days:{chat_id}"))
+    builder.row(_inline_button("✏️ Текст закрытия", f"{CB_QUIET}text:{chat_id}"))
+    builder.row(_inline_button("✏️ Текст открытия", f"{CB_QUIET}open_text:{chat_id}"))
+    builder.row(_inline_button("👁 Превью", f"{CB_QUIET}preview:{chat_id}"))
+    builder.row(_inline_button("🔙 Назад к настройкам", f"{CB_SETTINGS}open:{chat_id}"))
+    return builder.as_markup()
+
+
+def quiet_days_keyboard(
+    chat_id: int,
+    settings: dict[str, object],
+) -> InlineKeyboardMarkup:
+    """Выбор дней недели для «тихого времени».
+
+    :param chat_id: идентификатор чата.
+    :param settings: текущие настройки чата.
+    """
+    days = set(
+        quiet_hours_service.normalize_days(
+            settings.get(config.QUIET_HOURS_DAYS_KEY)
+        )
+    )
+    builder = InlineKeyboardBuilder()
+    for index, title in enumerate(config.WEEKDAY_TITLES):
+        icon = "✅" if index in days else "❌"
+        builder.button(
+            text=f"{icon} {title}",
+            callback_data=f"{CB_QUIET}day:{index}:{chat_id}",
+        )
+    builder.button(text="🔙 Назад", callback_data=f"{CB_QUIET}menu:{chat_id}")
+    builder.adjust(4, 3, 1)
+    return builder.as_markup()
+
+
+def rp_custom_keyboard(
+    chat_id: int,
+    commands: Sequence[dict[str, object]],
+) -> InlineKeyboardMarkup:
+    """Меню «Свои РП-команды».
+
+    :param chat_id: идентификатор чата.
+    :param commands: текущие свои команды чата.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(_inline_button("➕ Добавить команду", f"{CB_RPC}add:{chat_id}"))
+    if commands:
+        builder.row(_inline_button("🗑 Удалить команду", f"{CB_RPC}remove_menu:{chat_id}"))
+        builder.row(_inline_button("🧹 Очистить все", f"{CB_RPC}clear:{chat_id}"))
+    builder.row(_inline_button("🔙 Назад к настройкам", f"{CB_SETTINGS}open:{chat_id}"))
+    return builder.as_markup()
+
+
+def rp_custom_remove_keyboard(
+    chat_id: int,
+    commands: Sequence[dict[str, object]],
+) -> InlineKeyboardMarkup:
+    """Экран удаления своих РП-команд.
+
+    В ``callback_data`` пишется индекс команды (а не имя): имя может быть
+    длинным, а лимит ``callback_data`` — 64 байта.
+
+    :param chat_id: идентификатор чата.
+    :param commands: текущие свои команды чата.
+    """
+    builder = InlineKeyboardBuilder()
+    for index, item in enumerate(commands):
+        emoji = str(item.get("emoji") or "🎭")
+        name = str(item.get("name") or "")
+        builder.row(
+            _inline_button(
+                f"{emoji} .{name} — удалить", f"{CB_RPC}remove:{index}:{chat_id}"
+            )
+        )
+    builder.row(_inline_button("🔙 Назад", f"{CB_RPC}menu:{chat_id}"))
+    return builder.as_markup()
+
+
+def rp_custom_nsfw_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Выбор: команда обычная или 18+.
+
+    Имя команды в ``callback_data`` не пишется (лимит 64 байта) — оно берётся
+    из состояния FSM.
+
+    :param chat_id: идентификатор чата.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Обычная", callback_data=f"{CB_RPC}nsfw:0:{chat_id}")
+    builder.button(text="🔞 18+", callback_data=f"{CB_RPC}nsfw:1:{chat_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def rp_custom_prompt_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Кнопка отмены при пошаговом вводе своей РП-команды.
+
+    :param chat_id: идентификатор чата.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"{CB_RPC}menu:{chat_id}")
     builder.adjust(1)
     return builder.as_markup()
